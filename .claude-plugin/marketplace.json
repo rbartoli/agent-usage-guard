@@ -1,0 +1,12 @@
+{
+  "name": "agent-usage-guard",
+  "owner": { "name": "Riccardo Bartoli" },
+  "description": "Runtime safety guards for Claude Code usage, subagent fan-out, high-context churn, and retry loops.",
+  "plugins": [
+    {
+      "name": "agent-usage-guard",
+      "source": "./",
+      "description": "Runtime usage guard: subagent burst/concurrency caps, context gates, retry fuses, rate-limit circuit breaker."
+    }
+  ]
+}

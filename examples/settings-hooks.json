@@ -1,0 +1,119 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" prompt"
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "research|deep-research",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" prompt-expansion"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" pre-tool"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" tool-failure"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Task|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" post-tool"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" observe-stop"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" stop-failure"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" permission-denied"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" subagent-start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" subagent-stop"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"/path/to/agent-usage-guard.py\" ] || exit 0; python3 \"/path/to/agent-usage-guard.py\" post-compact"
+          }
+        ]
+      }
+    ]
+  }
+}

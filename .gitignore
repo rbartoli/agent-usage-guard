@@ -1,0 +1,8 @@
+__pycache__/
+.coverage
+.coverage.*
+.ruff_cache/
+*.pyc
+*.tmp
+state.json
+.DS_Store
