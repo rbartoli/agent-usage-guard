@@ -4149,6 +4149,75 @@ def test_shipped_manifests_cover_every_runtime_mode() -> None:
     assert marketplace.get("description")
 
 
+def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
+    """Prompt-side denials must not inherit Claude Code's ``[command]: `` prefix.
+
+    Exiting 2 with stderr alone makes Claude Code render the raw hook command -
+    including an unexpanded ``${CLAUDE_PLUGIN_ROOT}`` - ahead of the guard's own
+    message. Supplying a decision document on stdout hands over the reason
+    verbatim instead, while the exit code keeps the denial fail-closed should
+    that stdout ever be ignored.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        blocked = invoke("prompt", prompt_payload("keep going"), state)
+        assert blocked.returncode == 2
+        decision = json.loads(blocked.stdout)
+        assert decision["decision"] == "block"
+        assert decision["reason"].startswith("BLOCKED by agent-usage-guard")
+        assert decision["reason"] == blocked.stderr.strip()
+
+        expansion_state = Path(tmp) / "expansion.json"
+        expansion = invoke(
+            "prompt-expansion",
+            {
+                "hook_event_name": "UserPromptExpansion",
+                "session_id": "deep-session",
+                "command_name": "deep-research",
+                "command_args": "inspect",
+                "prompt": "/deep-research inspect",
+            },
+            expansion_state,
+        )
+        assert expansion.returncode == 2
+        expansion_decision = json.loads(expansion.stdout)
+        assert expansion_decision["decision"] == "block"
+        assert "opaque Workflow" in expansion_decision["reason"]
+        assert expansion_decision["reason"] == expansion.stderr.strip()
+
+
+def test_tool_denials_stay_on_the_stderr_only_block_path() -> None:
+    """PreToolUse keeps exit-2/stderr so permission accounting is untouched.
+
+    A decision document also sets a deny permission behaviour, which can reach
+    the PermissionDenied reconciliation path and release reservations the guard
+    still owns. Prompt events have no permission layer, so only they opt in.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        blocked = invoke(
+            "pre-tool",
+            tool_payload("workflow-json", "Workflow", {"workflow": "research"}),
+            state,
+        )
+        assert blocked.returncode == 2
+        assert "BLOCKED by agent-usage-guard" in blocked.stderr
+        assert blocked.stdout.strip() == ""
+
+
+def test_allowed_prompts_never_emit_a_block_decision() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        allowed = invoke("prompt", prompt_payload("a quiet prompt"), state)
+        assert allowed.returncode == 0
+        assert '"decision"' not in allowed.stdout
+
+
 def main() -> int:
     tests = [
         value for name, value in sorted(globals().items()) if name.startswith("test_")

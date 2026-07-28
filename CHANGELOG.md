@@ -22,6 +22,13 @@
 - Keep compaction boundaries beyond the rolling window and avoid globally
   blocking other models after an Opus-only limit.
 - Require escape markers as standalone first-line directives.
+- Deny prompt and `/research` events with a decision document so Claude Code
+  prints the guard's reason on its own. A bare exit 2 made it prefix the reason
+  with the configured hook command, which on a plugin install is the literal
+  unexpanded `${CLAUDE_PLUGIN_ROOT}/agent-usage-guard.py` and reads as a broken
+  path. The exit code stays 2, so the denial holds even if that stdout is
+  ignored. `PreToolUse` keeps the stderr-only path until its reservation
+  accounting has been exercised against a decision document.
 - Scan transcripts backwards for the latest model request instead of parsing a
   full 4 MiB tail on every tool call.
 - Retain rolling records on a process-independent 24-hour horizon so

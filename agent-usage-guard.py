@@ -1247,6 +1247,32 @@ def block(message: str) -> int:
     return 2
 
 
+def block_prompt(message: str) -> int:
+    """Deny a prompt-side event without Claude Code's ``[command]: `` prefix.
+
+    A bare exit 2 makes Claude Code render the configured hook command ahead of
+    the reason, which for a plugin install is the literal, unexpanded
+    ``${CLAUDE_PLUGIN_ROOT}/agent-usage-guard.py`` - noise that reads as a
+    broken path. A decision document supplies the reason verbatim instead.
+
+    The exit code deliberately stays 2. Claude Code parses hook stdout before it
+    inspects the status, so the document wins today; if that ever stops being
+    true the status still denies the event and only the prefix comes back.
+
+    ``PreToolUse`` deliberately keeps the plain path for now. Its denials are
+    equivalent under test - neither form emits ``PermissionDenied`` - but the
+    two-phase reservation accounting has not been exercised against a decision
+    document, so that move belongs in its own change.
+    """
+    print(
+        json.dumps(
+            {"decision": "block", "reason": message},
+            separators=(",", ":"),
+        )
+    )
+    return block(message)
+
+
 def add_context(event_name: str, message: str) -> int:
     print(
         json.dumps(
@@ -1466,7 +1492,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
 
             rate_limit = active_rate_limit(state, now)
             if rate_limit and not recovery and not usage_bypass:
-                return block(rate_limit_message(rate_limit))
+                return block_prompt(rate_limit_message(rate_limit))
 
             context = effective_context(state, sid, request)
             hard_context = env_int(
@@ -1475,7 +1501,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 1,
             )
             if context >= hard_context and not recovery and not usage_bypass:
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's context guard: this session is carrying "
                     f"roughly {context:,} context tokens. Run /compact or /clear "
                     "before submitting more work. /status, /model, /context and "
@@ -1484,7 +1510,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 )
 
             if requests_broad_resume(prompt) and not (agent_bypass or usage_bypass):
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's agent-burst guard: this prompt would "
                     "start or resume all saved agents at once. Name at most four "
                     "agents and work in batches. "
@@ -1530,7 +1556,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     for item in state["dormant_resumes"]
                 )
                 if existing is None and recent_dormant >= maximum:
-                    return block(
+                    return block_prompt(
                         "BLOCKED by agent-usage-guard's dormant-session guard: another "
                         "high-context session was resumed in the last "
                         f"{format_duration(window)}. This session would rebuild "
@@ -1569,7 +1595,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
             prompt,
             AGENT_OVERRIDE_MARKER,
         ):
-            return block(
+            return block_prompt(
                 "BLOCKED by agent-usage-guard's agent-burst guard: resume named agents in "
                 "small batches instead of resuming all agents."
             )
@@ -1610,10 +1636,10 @@ def prompt_expansion_guard(
             record_usage(state, request, now, window)
             rate_limit = active_rate_limit(state, now)
             if rate_limit and not usage_bypass:
-                return block(rate_limit_message(rate_limit))
+                return block_prompt(rate_limit_message(rate_limit))
 
             if command_name == "deep-research" and not (agent_bypass or usage_bypass):
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's Workflow guard: "
                     "/deep-research runs as an opaque Workflow that can launch "
                     "agents before lifecycle hooks can enforce a budget. Use "
@@ -1628,13 +1654,13 @@ def prompt_expansion_guard(
                 1,
             )
             if context >= research_context and not usage_bypass:
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's research guard: /research would begin at "
                     f"roughly {context:,} context tokens. Run /compact first, "
                     f"or deliberately bypass with {USAGE_OVERRIDE_MARKER}."
                 )
             if max_effort and not usage_bypass:
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's research guard: maximum effort combined "
                     "with parallel research caused the largest historical agent "
                     "swarm. Lower the effort level before /research, or use "
@@ -1661,7 +1687,7 @@ def prompt_expansion_guard(
                 )
                 >= near_limit
             ) and not (agent_bypass or usage_bypass):
-                return block(
+                return block_prompt(
                     "BLOCKED by agent-usage-guard's research guard: the rolling agent budget "
                     "is already near its limit. Wait for the "
                     f"{format_duration(window)} window to clear before "
