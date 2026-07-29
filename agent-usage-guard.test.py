@@ -4387,6 +4387,82 @@ def test_prompting_modes_still_escalate() -> None:
             ), mode
 
 
+def test_thresholds_of_one_read_as_english() -> None:
+    """Every threshold is env-tunable to 1, so a hard-coded plural is a bug.
+
+    These strings are shown in the permission dialog and fed back to the model,
+    and "1 agents are already active" reads as broken tooling in both places.
+    Verb agreement matters as much as the noun.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+
+        one_agent = root / "agent.json"
+        env = {"AGENT_GUARD_AGENT_MAX": "1"}
+        assert (
+            invoke("pre-tool", agent_payload("g1"), one_agent, extra_env=env).returncode
+            == 0
+        )
+        assert "1 agent is already active or reserved" in ask_reason(
+            invoke("pre-tool", agent_payload("g2"), one_agent, extra_env=env)
+        )
+
+        one_start = root / "rolling.json"
+        env = {"AGENT_GUARD_ROLLING_MAX": "1", "AGENT_GUARD_AGENT_MAX": "9"}
+        assert (
+            invoke("pre-tool", agent_payload("r1"), one_start, extra_env=env).returncode
+            == 0
+        )
+        assert "1 start/resume was observed or reserved" in ask_reason(
+            invoke("pre-tool", agent_payload("r2"), one_start, extra_env=env)
+        )
+
+        one_failure = root / "failure.json"
+        env = {"AGENT_GUARD_TOOL_FAILURE_MAX": "1"}
+        failed = {"query": "same input"}
+        notice = invoke(
+            "tool-failure",
+            failure_payload("f1", "mcp__search", failed),
+            one_failure,
+            extra_env=env,
+        )
+        assert "has failed 1 time." in notice.stdout, notice.stdout
+        assert "input failed 1 time in the last" in ask_reason(
+            invoke(
+                "pre-tool",
+                tool_payload("f2", "mcp__search", failed),
+                one_failure,
+                extra_env=env,
+            )
+        )
+
+        one_tool = root / "tools.json"
+        transcript = root / "heavy.jsonl"
+        write_transcript(transcript, NOW - 1, 450_000)
+        env = {"AGENT_GUARD_TOOL_MAX": "1"}
+        assert (
+            invoke(
+                "pre-tool",
+                tool_payload(
+                    "t1", "Bash", {"command": "echo 1"}, transcript=transcript
+                ),
+                one_tool,
+                extra_env=env,
+            ).returncode
+            == 0
+        )
+        assert "and already used 1 tool in the last" in ask_reason(
+            invoke(
+                "pre-tool",
+                tool_payload(
+                    "t2", "Bash", {"command": "echo 2"}, transcript=transcript
+                ),
+                one_tool,
+                extra_env=env,
+            )
+        )
+
+
 def test_unanswered_escalation_reads_as_a_refusal_when_the_call_returns() -> None:
     """A refused dialog is silent, so the retry is what reveals the refusal.
 

@@ -1413,6 +1413,16 @@ def format_clock(now: float) -> str:
         return str(now)
 
 
+def plural(count: int, singular: str, many: str) -> str:
+    """Render a count against a phrase that agrees with it.
+
+    Every threshold here is env-tunable down to 1, so a hard-coded plural reads
+    as a bug in the denial the model and the user both see. The phrase carries
+    the verb too, because "1 agent is" needs more than a dropped "s".
+    """
+    return f"{count} {singular if count == 1 else many}"
+
+
 def format_duration(seconds: int) -> str:
     if seconds % 60:
         return f"{seconds} second{'s' if seconds != 1 else ''}"
@@ -1836,8 +1846,9 @@ def prompt_expansion_guard(
             )
         return add_context(
             "UserPromptExpansion",
-            f"USAGE GUARD FOR /research: use at most {rolling_max} total leaf "
-            f"agents in {format_duration(window)} and at most {active_max} "
+            "USAGE GUARD FOR /research: use at most "
+            f"{plural(rolling_max, 'total leaf agent', 'total leaf agents')} in "
+            f"{format_duration(window)} and at most {active_max} "
             "concurrently. Agents must not spawn other agents. Work in bounded "
             "batches and stop when the budget is reached; the hook enforces "
             "these limits.",
@@ -1983,7 +1994,7 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             if failures >= failure_max and not usage_bypass:
                 block_reason = (
                     "BLOCKED by agent-usage-guard's tool-error fuse: this exact tool and "
-                    f"input failed {failures} times in the last "
+                    f"input failed {plural(failures, 'time', 'times')} in the last "
                     f"{format_duration(window)}. Do not retry it unchanged; "
                     "switch provider, change the input, or diagnose the failure."
                 )
@@ -2012,7 +2023,8 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 block_reason = (
                     "BLOCKED by agent-usage-guard's high-context turn guard: this session is "
                     f"at roughly {context:,} context tokens and already used "
-                    f"{recent_tools} tools in the last {format_duration(window)}. "
+                    f"{plural(recent_tools, 'tool', 'tools')} in the last "
+                    f"{format_duration(window)}. "
                     "End the turn with a checkpoint; run /compact "
                     "before continuing."
                 )
@@ -2101,7 +2113,8 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 ):
                     block_reason = (
                         "BLOCKED by agent-usage-guard's active-agent guard: "
-                        f"{active_max} agents are already active or reserved. "
+                        f"{plural(active_max, 'agent is', 'agents are')} "
+                        "already active or reserved. "
                         "Wait for one to finish or for an unconfirmed reservation "
                         "to clear before starting or resuming another."
                     )
@@ -2118,7 +2131,8 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 ):
                     block_reason = (
                         "BLOCKED by agent-usage-guard's rolling agent guard: "
-                        f"{rolling_max} starts/resumes were observed or reserved in "
+                        f"{plural(rolling_max, 'start/resume was', 'starts/resumes were')} "
+                        "observed or reserved in "
                         f"the last {format_duration(window)}. Agent completion "
                         "does not reset this budget."
                     )
@@ -2347,7 +2361,8 @@ def tool_failure(payload: dict[str, Any], now: float, window: int) -> int:
     if should_warn:
         return add_context(
             "PostToolUseFailure",
-            f"USAGE GUARD: this exact tool input has failed {count} times. "
+            "USAGE GUARD: this exact tool input has failed "
+            f"{plural(count, 'time', 'times')}. "
             "Do not submit it unchanged again; diagnose the error, change the "
             "input, or switch tools/providers. A retry fuse is now active.",
         )
