@@ -4191,12 +4191,11 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert expansion_decision["reason"] == expansion.stderr.strip()
 
 
-def test_tool_denials_stay_on_the_stderr_only_block_path() -> None:
-    """PreToolUse keeps exit-2/stderr so permission accounting is untouched.
+def test_tool_denials_carry_an_unprefixed_permission_decision() -> None:
+    """PreToolUse denials use the decision shape so the reason reaches the model clean.
 
-    A decision document also sets a deny permission behaviour, which can reach
-    the PermissionDenied reconciliation path and release reservations the guard
-    still owns. Prompt events have no permission layer, so only they opt in.
+    The reason is fed back to the model, so a leading ``[python3 "${...}" pre-tool]:``
+    spent context on every agent-budget denial.
     """
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
@@ -4206,8 +4205,51 @@ def test_tool_denials_stay_on_the_stderr_only_block_path() -> None:
             state,
         )
         assert blocked.returncode == 2
-        assert "BLOCKED by agent-usage-guard" in blocked.stderr
-        assert blocked.stdout.strip() == ""
+        specific = json.loads(blocked.stdout)["hookSpecificOutput"]
+        assert specific["hookEventName"] == "PreToolUse"
+        assert specific["permissionDecision"] == "deny"
+        assert specific["permissionDecisionReason"].startswith(
+            "BLOCKED by agent-usage-guard"
+        )
+        assert specific["permissionDecisionReason"] == blocked.stderr.strip()
+
+
+def test_denied_agent_leaves_no_reservation_residue() -> None:
+    """A denied Agent call must not leave a lease, reservation, or history row.
+
+    This is the accounting the decision document was suspected of disturbing:
+    if a denial were mistaken for a permission rollback, or a reservation
+    survived a denial, the rolling budget would drift away from reality.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        env = {"AGENT_GUARD_ROLLING_MAX": "1", "AGENT_GUARD_AGENT_MAX": "1"}
+        allowed = invoke(
+            "pre-tool",
+            agent_payload("agent-first", session="residue"),
+            state,
+            extra_env=env,
+        )
+        assert allowed.returncode == 0
+
+        denied = invoke(
+            "pre-tool",
+            agent_payload("agent-second", session="residue"),
+            state,
+            extra_env=env,
+        )
+        assert denied.returncode == 2
+        assert (
+            json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"]
+            == "deny"
+        )
+
+        guard_state = load_state(state)
+        for bucket in ("agent_pending", "agent_leases", "agent_history"):
+            assert not any(
+                item.get("tool_use_id") == "agent-second"
+                for item in guard_state[bucket]
+            ), f"denied agent left residue in {bucket}"
 
 
 def test_allowed_prompts_never_emit_a_block_decision() -> None:

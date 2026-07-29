@@ -1273,6 +1273,34 @@ def block_prompt(message: str) -> int:
     return block(message)
 
 
+def block_tool(message: str) -> int:
+    """Deny a tool call without Claude Code's ``[command]: `` prefix.
+
+    Same rationale as :func:`block_prompt`, using the ``PreToolUse`` decision
+    shape. A denial reason that opens with the hook's own command line is worse
+    here than on a prompt: the reason is fed to the model, so every agent-budget
+    denial spent that prefix on context the model has to read past.
+
+    A live A/B against Claude Code 2.1.220 found the two forms equivalent. Both
+    deny the call, both surface the reason to the model, both record the call in
+    ``permission_denials``, and neither emits ``PermissionDenied`` - so the
+    two-phase reservation accounting behaves identically either way.
+    """
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": message,
+                }
+            },
+            separators=(",", ":"),
+        )
+    )
+    return block(message)
+
+
 def add_context(event_name: str, message: str) -> int:
     print(
         json.dumps(
@@ -2072,14 +2100,14 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 )
     except OSError:
         if is_workflow:
-            return block(
+            return block_tool(
                 "BLOCKED by agent-usage-guard's Workflow guard: shared state "
                 "was unavailable, and opaque multi-agent Workflows fail closed. "
                 "Use bounded Agent calls after the state issue is resolved."
             )
         return 0
 
-    return block(block_reason) if block_reason else 0
+    return block_tool(block_reason) if block_reason else 0
 
 
 def tool_failure(payload: dict[str, Any], now: float, window: int) -> int:
