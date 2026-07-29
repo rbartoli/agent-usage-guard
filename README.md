@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 129 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 131 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -102,7 +102,7 @@ Claude Code's hook model limits what *any* hook-based guard can do. Verified aga
 | `/subtask` and forked-skill launches | **Observed only, not pre-blockable in 2.1.220.** Live testing found that `/subtask` bypasses `UserPromptSubmit`, `UserPromptExpansion`, and `PreToolUse`; only non-blocking `SubagentStart` ran. Use native caps as defense in depth, and avoid these paths when a strict pre-spend guarantee is required |
 | A manually denied Agent permission | Manual and permission-rule denials do not emit `PermissionDenied`. The guard keeps a provisional reservation, reconciles the real `tool_result` from the parent transcript, and expires unresolved reservations after five minutes |
 | `bypassPermissions` / `dontAsk` | **No dialog exists to raise.** A hook `ask` in these modes would be auto-answered, so tool-side trips fall back to a hard `deny` and record the refusal inline. Behaviour there is identical to before escalation existed |
-| Refusing a guard-raised `ask` dialog | **Reservation cleanup is safe either way** — it is released by `PermissionDenied` if that fires, and otherwise reconciled from the transcript or expired after five minutes, exactly like a manual denial. The **refusal ladder** is the part that depends on `PermissionDenied`: if refusing a hook-raised `ask` behaves like a manual denial and emits nothing, the tool-side ladder stops advancing and the agent fuse never trips, so the guard keeps asking instead of escalating. Budgets, reservations, and every other protection are unaffected |
+| Refusing a guard-raised `ask` dialog | **Emits nothing at all** — verified live against 2.1.220 for both "No" and Esc: no `PermissionDenied`, so the guard is never told the outcome. Refusals are therefore inferred, not observed. An escalated reservation still unresolved when the identical call comes back was refused, because an approved one would have been confirmed into a lease and the model cannot re-propose while its own dialog is open. That reclaims the reservation and advances the ladder |
 | Subagent-attributed context accounting | **Delayed and best-effort** — the guard reads the documented `agent_transcript_path` at `SubagentStop`; a running agent's unreported usage and requests older than the 4 MiB transcript tail are not yet counted |
 | `SendMessage` to a teammate vs. a resumed subagent | **Exact for observed subagent IDs/names.** Plain text to a known stopped target reserves a resume; active-agent steering, structured shutdown/approval messages, and unknown targets do not |
 
@@ -206,7 +206,7 @@ in Claude Code 2.1.220; see the limitations table above.
 ## Design notes
 
 - **State** is a single JSON file guarded by `flock` and written atomically (`mkstemp` + `fsync` + `rename`); on supported systems, concurrent Claude processes share it safely.
-- **Permission accounting is two-phase.** `PreToolUse` reserves capacity — including for a call it escalates, since an approved one would otherwise run uncounted; `SubagentStart` or successful `PostToolUse` confirms it. `PermissionDenied` releases the reservation and records the refusal. Manual denials are reconciled from the transcript and unresolved reservations self-expire.
+- **Permission accounting is two-phase.** `PreToolUse` reserves capacity — including for a call it escalates, since an approved one would otherwise run uncounted; `SubagentStart` or successful `PostToolUse` confirms it. A refused dialog is silent, so an escalated reservation that is still unresolved when the identical call returns is read back as a refusal. `PermissionDenied` does the same when it fires; manual denials are reconciled from the transcript and unresolved reservations self-expire.
 - **Latest-request reads scan backwards.** Ordinary tool hooks stop after finding the newest real assistant request instead of parsing the complete transcript tail.
 - **State-dependent checks fail open.** A guard that can crash your session is worse than no guard; pure prompt checks still work when state is unavailable.
 - **Repeated tool-call refusals never repeat byte-identical text.** Each carries the attempt number, local wall clock, and an instruction that escalates with each retry, ending in a mechanical session fuse for agent calls. Only a real refusal advances the ladder, so approving a call never counts against you.

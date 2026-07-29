@@ -1930,6 +1930,37 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             record_usage(state, request, now, window)
             usage_bypass = usage_override_active(state, sid, now)
             agent_bypass = agent_override_active(state, sid, now)
+
+            # Refusing a guard-raised dialog emits no PermissionDenied - verified
+            # live against Claude Code 2.1.220 for both "No" and Esc - so the
+            # refusal has to be inferred instead of observed. An escalated
+            # reservation still sitting unresolved when the identical call comes
+            # back was refused: an approved one would have been confirmed into a
+            # lease by SubagentStart or PostToolUse, and the model cannot
+            # re-propose the call while its own dialog is still open.
+            for stale_id in [
+                str(item.get("tool_use_id") or "")
+                for item in state["agent_pending"]
+                if item.get("escalated")
+                and item.get("session_id") == sid
+                and item.get("fingerprint") == fingerprint
+                and item.get("tool_use_id") != tool_id
+            ]:
+                release_pending_attempt(
+                    state,
+                    sid,
+                    stale_id,
+                    release_tool_event=True,
+                )
+                state["block_events"].append(
+                    {
+                        "at": now,
+                        "retention_until": now + MAX_WINDOW_SECONDS,
+                        "session_id": sid,
+                        "fingerprint": fingerprint,
+                    }
+                )
+
             attempt = 1 + sum(
                 item.get("fingerprint") == fingerprint
                 and item.get("session_id") == sid
@@ -2208,6 +2239,10 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "source": "pre_tool_pending",
                         "transcript_path": stored_path,
                         "offset": stored_offset,
+                        # Marks a reservation whose dialog is still unanswered,
+                        # so an unresolved one can be read back as a refusal.
+                        "escalated": bool(block_reason),
+                        "fingerprint": fingerprint,
                     }
                     state["agent_pending"].append(entry)
 

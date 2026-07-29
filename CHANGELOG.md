@@ -29,11 +29,16 @@
   bypassPermissions so the permission dialog can render the guard's own
   message, and the wait matches that hook text. Tests reject a tape that tells
   the model what to say.
-- Advance the refusal ladder from `PermissionDenied` rather than at
-  `PreToolUse`. An ask has no outcome at decision time, so recording it inline
-  would have charged a denial to a call the user approved. Only real refusals
-  now count, and the two hard-refusal states - a burning agent fuse and the
-  attempt that trips it - still deny with exit 2 and raise no dialog.
+- Advance the refusal ladder by inference rather than at `PreToolUse`. An ask
+  has no outcome at decision time, so recording it inline would have charged a
+  denial to a call the user approved. Refusing a guard-raised dialog turns out
+  to emit nothing at all - verified live against 2.1.220 for both "No" and Esc,
+  no `PermissionDenied` - so an escalated reservation still unresolved when the
+  identical call comes back is read as a refusal: an approved one would have
+  been confirmed into a lease, and the model cannot re-propose while its own
+  dialog is open. That reclaims the orphaned reservation instead of leaving it
+  to expire. The two hard-refusal states - a burning agent fuse and the attempt
+  that trips it - still deny with exit 2 and record inline.
 
 ## 0.2.0 — 2026-07-27
 

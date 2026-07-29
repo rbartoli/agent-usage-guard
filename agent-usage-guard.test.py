@@ -2540,16 +2540,16 @@ def blocked_agent_attempt(
     now: int = NOW,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Attempt a refused agent call and answer any dialog it raises with 'no'.
+    """Attempt a refused agent call, and simply walk away from any dialog.
 
-    Escalation is what advances the refusal ladder now: PreToolUse cannot know
-    the outcome, so only a real PermissionDenied counts as a denial. A hard deny
-    never reaches the user, so it raises no dialog to answer.
+    This is what a real refusal looks like: Claude Code 2.1.220 emits no
+    PermissionDenied when a guard-raised ask is answered with "No" or Esc, so
+    nothing tells the guard the outcome. The ladder has to advance from the
+    identical call coming back with the previous reservation still unresolved.
     """
     payload = agent_payload(f"retry-{index}", description, session=session)
     proc = invoke("pre-tool", payload, state, now=now, extra_env=extra_env)
-    if tool_decision(proc)[0] == "ask":
-        decline(payload, state, now=now, extra_env=extra_env)
+    tool_decision(proc)
     return proc
 
 
@@ -4177,7 +4177,7 @@ def test_demo_gif_visual_contract_is_valid_animated_and_documented() -> None:
     # `sha256sum assets/agent-usage-guard.gif`.
     assert (
         hashlib.sha256(gif.read_bytes()).hexdigest()
-        == "c97e29be69d0178458788709c4a4e53f133396c84529b046b64d82d3bbb77613"
+        == "efc074de9efca381d5fac545d201718e3e956d7e7738311cba48cce085c6375f"
     )
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert 'src="assets/agent-usage-guard.gif"' in readme
@@ -4385,6 +4385,107 @@ def test_prompting_modes_still_escalate() -> None:
             assert "already active or reserved" in ask_reason(
                 invoke("pre-tool", second, state, extra_env=env)
             ), mode
+
+
+def test_unanswered_escalation_reads_as_a_refusal_when_the_call_returns() -> None:
+    """A refused dialog is silent, so the retry is what reveals the refusal.
+
+    Verified live against Claude Code 2.1.220: answering a guard-raised ask with
+    "No" or Esc emits no PermissionDenied at all, leaving the reservation
+    orphaned and the ladder frozen. An escalated reservation still unresolved
+    when the identical call comes back can only have been refused - an approved
+    one would have been confirmed into a lease, and the model cannot re-propose
+    while its own dialog is open.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        env = {"AGENT_GUARD_AGENT_MAX": "1"}
+        assert (
+            invoke(
+                "pre-tool",
+                agent_payload("infer-first", session="infer"),
+                state,
+                extra_env=env,
+            ).returncode
+            == 0
+        )
+        first = invoke(
+            "pre-tool",
+            agent_payload("infer-second", "Same refused work", session="infer"),
+            state,
+            extra_env=env,
+        )
+        assert "denial 1" in ask_reason(first)
+
+        # Nothing is sent back: the user simply said no and the dialog closed.
+        retry = invoke(
+            "pre-tool",
+            agent_payload("infer-third", "Same refused work", session="infer"),
+            state,
+            extra_env=env,
+        )
+        assert "denial 2" in ask_reason(retry)
+        guard_state = load_state(state)
+        assert len(guard_state["block_events"]) == 1
+        # The orphaned reservation is reclaimed rather than left to expire.
+        assert not any(
+            item.get("tool_use_id") == "infer-second"
+            for item in guard_state["agent_pending"]
+        )
+
+
+def test_an_approved_escalation_is_never_read_as_a_refusal() -> None:
+    """Only an escalated reservation may be read back as a refusal.
+
+    An allowed call reserves too, and a batch of identical agents shares one
+    fingerprint. If the marker were set on every reservation instead of only on
+    escalated ones, the first allowed call would be reclaimed and charged as a
+    denial the moment its twin escalated.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        env = {"AGENT_GUARD_AGENT_MAX": "1"}
+        # Deliberately shares a fingerprint with the escalated calls below.
+        assert (
+            invoke(
+                "pre-tool",
+                agent_payload(
+                    "ok-first", "Approved work", session="ok", agent_type="rev"
+                ),
+                state,
+                extra_env=env,
+            ).returncode
+            == 0
+        )
+        escalated = invoke(
+            "pre-tool",
+            agent_payload("ok-second", "Approved work", session="ok", agent_type="rev"),
+            state,
+            extra_env=env,
+        )
+        assert "denial 1" in ask_reason(escalated)
+
+        # The user allows it, so both agents are now running and each confirms
+        # its own reservation into a lease.
+        for agent_id in ("ok-first-id", "ok-second-id"):
+            assert (
+                invoke(
+                    "subagent-start",
+                    start_payload(agent_id, session="ok", agent_type="rev"),
+                    state,
+                    extra_env=env,
+                ).returncode
+                == 0
+            )
+        assert not load_state(state)["agent_pending"]
+        again = invoke(
+            "pre-tool",
+            agent_payload("ok-third", "Approved work", session="ok", agent_type="rev"),
+            state,
+            extra_env=env,
+        )
+        assert "denial 1" in ask_reason(again), "an approved call must cost nothing"
+        assert load_state(state)["block_events"] == []
 
 
 def test_approved_escalated_agent_is_still_counted_against_the_budget() -> None:
