@@ -69,12 +69,19 @@ def main() -> int:
             str(EMPTY_MCP_CONFIG),
             "--tools",
             "Agent,Read",
+            # Pre-approve the tools the audit legitimately needs so the only
+            # dialog on screen is the one the guard raises. bypassPermissions
+            # would suppress that dialog entirely - the guard falls back to a
+            # hard deny there, which is safe but shows nothing worth recording.
+            "--allowedTools",
+            "Agent",
+            "Read",
             "--model",
             args.model,
             "--effort",
             "low",
             "--permission-mode",
-            "bypassPermissions",
+            "manual",
             "--exclude-dynamic-system-prompt-sections",
             "--session-id",
             str(uuid.uuid4()),

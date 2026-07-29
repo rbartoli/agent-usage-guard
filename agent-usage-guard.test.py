@@ -48,6 +48,71 @@ def invoke(
     return proc
 
 
+def tool_decision(proc: subprocess.CompletedProcess[str]) -> tuple[str, str]:
+    """Return the (decision, reason) a PreToolUse refusal carried.
+
+    A tool-side guard trip escalates to the user with ``ask`` and exit 0, so the
+    reason no longer reaches stderr. Only the two hard-refusal states - a burning
+    fuse and the attempt that trips it - still deny with exit 2.
+    """
+    assert proc.stdout.strip(), (
+        f"expected a PreToolUse decision document, got none: {proc.stderr}"
+    )
+    specific = json.loads(proc.stdout)["hookSpecificOutput"]
+    assert specific["hookEventName"] == "PreToolUse", proc.stdout
+    decision = specific["permissionDecision"]
+    assert decision in {"ask", "deny"}, proc.stdout
+    assert proc.returncode == (2 if decision == "deny" else 0), proc.stdout
+    return decision, specific["permissionDecisionReason"]
+
+
+def ask_reason(proc: subprocess.CompletedProcess[str]) -> str:
+    decision, reason = tool_decision(proc)
+    assert decision == "ask", proc.stdout
+    return reason
+
+
+def deny_reason(proc: subprocess.CompletedProcess[str]) -> str:
+    decision, reason = tool_decision(proc)
+    assert decision == "deny", proc.stdout
+    return reason
+
+
+def outcome(proc: subprocess.CompletedProcess[str]) -> str:
+    """Classify a PreToolUse result as allow, ask, or deny."""
+    if not proc.stdout.strip():
+        assert proc.returncode == 0, proc.stderr
+        return "allow"
+    return tool_decision(proc)[0]
+
+
+def refusal_reason(proc: subprocess.CompletedProcess[str]) -> str:
+    """Reason from either refusal shape, for callers that do not care which."""
+    return tool_decision(proc)[1]
+
+
+def decline(
+    payload: dict,
+    state: Path,
+    *,
+    now: int = NOW,
+    extra_env: dict[str, str] | None = None,
+) -> None:
+    """Answer an escalated tool call with 'no', the way the user's dialog does."""
+    denied = dict(payload)
+    denied["hook_event_name"] = "PermissionDenied"
+    assert (
+        invoke(
+            "permission-denied",
+            denied,
+            state,
+            now=now,
+            extra_env=extra_env,
+        ).returncode
+        == 0
+    )
+
+
 def assistant_record(
     timestamp: int, context: int, request_id: str | None = None
 ) -> dict:
@@ -490,8 +555,7 @@ def test_allows_four_resume_messages_then_blocks() -> None:
                 == 0
             )
         blocked = invoke("pre-tool", send_payload("tool-5", "agent-5"), state)
-        assert blocked.returncode == 2
-        assert "4 agents are already active" in blocked.stderr
+        assert "4 agents are already active" in ask_reason(blocked)
 
 
 def test_any_message_to_inactive_agent_counts_as_resume() -> None:
@@ -545,8 +609,7 @@ def test_any_message_to_inactive_agent_counts_as_resume() -> None:
             ),
             state,
         )
-        assert blocked.returncode == 2
-        assert "4 agents are already active" in blocked.stderr
+        assert "4 agents are already active" in ask_reason(blocked)
 
 
 def test_unknown_agent_coordination_messages_do_not_consume_resume_budget() -> None:
@@ -695,7 +758,7 @@ def test_agent_starts_share_the_same_four_slots() -> None:
         assert invoke("pre-tool", agent_payload("start-2"), state).returncode == 0
         assert invoke("pre-tool", agent_payload("start-3"), state).returncode == 0
         assert invoke("pre-tool", agent_payload("start-4"), state).returncode == 0
-        assert invoke("pre-tool", agent_payload("start-5"), state).returncode == 2
+        assert ask_reason(invoke("pre-tool", agent_payload("start-5"), state))
 
 
 def test_subagent_stop_releases_start_and_resume_slots() -> None:
@@ -719,7 +782,7 @@ def test_subagent_stop_releases_start_and_resume_slots() -> None:
             ).returncode
             == 0
         )
-        assert invoke("pre-tool", agent_payload("start-blocked"), state).returncode == 2
+        assert ask_reason(invoke("pre-tool", agent_payload("start-blocked"), state))
 
         # A resumed agent confirms before its stop releases the active lease.
         assert (
@@ -769,7 +832,7 @@ def test_duplicate_global_and_project_lifecycle_hooks_are_idempotent() -> None:
 
         # Exactly one slot was released by the duplicated stop delivery.
         assert invoke("pre-tool", agent_payload("start-5"), state).returncode == 0
-        assert invoke("pre-tool", agent_payload("start-6"), state).returncode == 2
+        assert ask_reason(invoke("pre-tool", agent_payload("start-6"), state))
 
 
 def test_same_type_stop_releases_the_exact_agent_id() -> None:
@@ -831,15 +894,10 @@ def test_out_of_order_same_type_named_starts_never_swap_reservations() -> None:
         )
         gamma = agent_payload("post-correlation-gamma")
         assert invoke("pre-tool", gamma, state).returncode == 0
-        assert (
-            invoke(
-                "pre-tool",
-                agent_payload("post-correlation-delta"),
-                state,
-                extra_env={"AGENT_GUARD_AGENT_MAX": "2"},
-            ).returncode
-            == 2
-        )
+        delta = agent_payload("post-correlation-delta")
+        delta_env = {"AGENT_GUARD_AGENT_MAX": "2"}
+        assert ask_reason(invoke("pre-tool", delta, state, extra_env=delta_env))
+        decline(delta, state, extra_env=delta_env)
         assert (
             invoke(
                 "tool-failure",
@@ -919,8 +977,7 @@ def test_ambiguous_start_and_remaining_pending_share_one_capacity_slot() -> None
         assert invoke("pre-tool", agent_payload("delta"), state).returncode == 0
         assert invoke("pre-tool", agent_payload("epsilon"), state).returncode == 0
         blocked = invoke("pre-tool", agent_payload("zeta"), state)
-        assert blocked.returncode == 2
-        assert "already active or reserved" in blocked.stderr
+        assert "already active or reserved" in ask_reason(blocked)
 
 
 def test_expired_ambiguous_candidates_never_overlap_a_future_pending_attempt() -> None:
@@ -983,8 +1040,7 @@ def test_expired_ambiguous_candidates_never_overlap_a_future_pending_attempt() -
             state,
             now=NOW + 301,
         )
-        assert blocked.returncode == 2
-        assert "already active or reserved" in blocked.stderr
+        assert "already active or reserved" in ask_reason(blocked)
 
 
 def test_duplicate_stop_does_not_release_another_same_type_agent() -> None:
@@ -1009,7 +1065,7 @@ def test_duplicate_stop_does_not_release_another_same_type_agent() -> None:
             "agent-d",
         }
         assert invoke("pre-tool", agent_payload("fifth"), state).returncode == 0
-        assert invoke("pre-tool", agent_payload("sixth"), state).returncode == 2
+        assert ask_reason(invoke("pre-tool", agent_payload("sixth"), state))
 
 
 def test_same_tool_retry_is_idempotent() -> None:
@@ -1060,7 +1116,7 @@ def test_window_expiry_allows_next_batch() -> None:
         assert invoke("pre-tool", send_payload("b", "agent-b"), state).returncode == 0
         assert invoke("pre-tool", send_payload("c", "agent-c"), state).returncode == 0
         assert invoke("pre-tool", send_payload("d", "agent-d"), state).returncode == 0
-        assert invoke("pre-tool", send_payload("e", "agent-e"), state).returncode == 2
+        assert ask_reason(invoke("pre-tool", send_payload("e", "agent-e"), state))
         assert invoke("subagent-start", start_payload("agent-a"), state).returncode == 0
         assert invoke("subagent-start", start_payload("agent-b"), state).returncode == 0
         assert invoke("subagent-start", start_payload("agent-c"), state).returncode == 0
@@ -1132,8 +1188,7 @@ def test_short_window_process_cannot_erase_another_process_history() -> None:
             now=NOW + 100,
             extra_env=long_window,
         )
-        assert blocked.returncode == 2
-        assert "rolling agent guard" in blocked.stderr
+        assert "rolling agent guard" in ask_reason(blocked)
         assert (
             invoke(
                 "prompt",
@@ -1199,8 +1254,7 @@ def test_short_window_origin_cannot_hide_history_from_long_window_caller() -> No
             now=NOW + 2,
             extra_env={"AGENT_GUARD_WINDOW_SECONDS": "600"},
         )
-        assert blocked.returncode == 2
-        assert "rolling agent guard" in blocked.stderr
+        assert "rolling agent guard" in ask_reason(blocked)
 
 
 def test_active_agents_remain_leased_after_rolling_window_expires() -> None:
@@ -1224,8 +1278,7 @@ def test_active_agents_remain_leased_after_rolling_window_expires() -> None:
             state,
             now=NOW + 601,
         )
-        assert blocked.returncode == 2
-        assert "already active" in blocked.stderr
+        assert "already active" in ask_reason(blocked)
         assert (
             invoke(
                 "subagent-stop",
@@ -1278,7 +1331,7 @@ def test_nondefault_lease_expiry_is_stamped_per_confirmed_agent() -> None:
             now=NOW + 7 * 60 * 60,
             extra_env={"AGENT_GUARD_AGENT_MAX": "1"},
         )
-        assert still_blocked.returncode == 2
+        assert ask_reason(still_blocked)
 
         short_state = Path(tmp) / "short-state.json"
         short_env = {
@@ -1367,34 +1420,38 @@ def test_parallel_resumes_atomically_allow_only_four() -> None:
         state = Path(tmp) / "state.json"
         seed_known_agents(state, [f"agent-{index}" for index in range(8)])
 
-        def one(index: int) -> int:
-            return invoke(
-                "pre-tool",
-                send_payload(f"parallel-{index}", f"agent-{index}"),
-                state,
-            ).returncode
+        def one(index: int) -> str:
+            return outcome(
+                invoke(
+                    "pre-tool",
+                    send_payload(f"parallel-{index}", f"agent-{index}"),
+                    state,
+                )
+            )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             codes = list(pool.map(one, range(8)))
-        assert codes.count(0) == 4, codes
-        assert codes.count(2) == 4, codes
+        assert codes.count("allow") == 4, codes
+        assert codes.count("ask") == 4, codes
 
 
 def test_parallel_agent_starts_atomically_allow_only_four() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
 
-        def one(index: int) -> int:
-            return invoke(
-                "pre-tool",
-                agent_payload(f"parallel-start-{index}"),
-                state,
-            ).returncode
+        def one(index: int) -> str:
+            return outcome(
+                invoke(
+                    "pre-tool",
+                    agent_payload(f"parallel-start-{index}"),
+                    state,
+                )
+            )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             codes = list(pool.map(one, range(8)))
-        assert codes.count(0) == 4, codes
-        assert codes.count(2) == 4, codes
+        assert codes.count("allow") == 4, codes
+        assert codes.count("ask") == 4, codes
 
 
 def test_rate_limit_circuit_blocks_work_but_allows_recovery_and_expires() -> None:
@@ -1419,8 +1476,7 @@ def test_rate_limit_circuit_blocks_work_but_allows_recovery_and_expires() -> Non
             agent_payload("rate-limited-agent"),
             state,
         )
-        assert blocked_agent.returncode == 2
-        assert "circuit breaker" in blocked_agent.stderr
+        assert "circuit breaker" in ask_reason(blocked_agent)
 
         assert invoke("prompt", prompt_payload("/status"), state).returncode == 0
         assert (
@@ -1571,8 +1627,7 @@ def test_rolling_agent_budget_survives_agent_completion() -> None:
                 invoke("subagent-stop", stop_payload(agent_id), state).returncode == 0
             )
         blocked = invoke("pre-tool", agent_payload("rolling-12"), state)
-        assert blocked.returncode == 2
-        assert "12 starts/resumes" in blocked.stderr
+        assert "12 starts/resumes" in ask_reason(blocked)
 
 
 def test_nested_agent_spawn_is_blocked_but_normal_leaf_tools_work() -> None:
@@ -1605,8 +1660,7 @@ def test_nested_agent_spawn_is_blocked_but_normal_leaf_tools_work() -> None:
             ),
             state,
         )
-        assert blocked.returncode == 2
-        assert "subagent may not spawn" in blocked.stderr
+        assert "subagent may not spawn" in ask_reason(blocked)
 
 
 def test_agent_override_allows_intentional_nested_agent() -> None:
@@ -1666,8 +1720,7 @@ def test_agent_context_ceiling_blocks_next_start() -> None:
             == 0
         )
         blocked = invoke("pre-tool", agent_payload("after-heavy-agent"), state)
-        assert blocked.returncode == 2
-        assert "20,000,000 raw context tokens" in blocked.stderr
+        assert "20,000,000 raw context tokens" in ask_reason(blocked)
 
 
 def test_subagent_stop_counts_all_requests_from_agent_transcript() -> None:
@@ -1716,8 +1769,7 @@ def test_subagent_stop_counts_all_requests_from_agent_transcript() -> None:
             state,
             extra_env={"AGENT_GUARD_CONTEXT_MAX": "100"},
         )
-        assert blocked.returncode == 2
-        assert "120 raw context tokens" in blocked.stderr
+        assert "120 raw context tokens" in ask_reason(blocked)
 
 
 def test_context_warning_hard_gate_recovery_override_and_postcompact() -> None:
@@ -1892,8 +1944,7 @@ def test_high_context_turn_stops_after_tool_budget() -> None:
             state,
             extra_env=env,
         )
-        assert blocked.returncode == 2
-        assert "high-context turn guard" in blocked.stderr
+        assert "high-context turn guard" in ask_reason(blocked)
 
 
 def test_research_expansion_is_bounded_and_duplicate_notice_is_suppressed() -> None:
@@ -2071,8 +2122,7 @@ def test_identical_tool_failure_fuse_warns_blocks_and_expires() -> None:
             tool_payload("fourth-attempt", "mcp__search", tool_input),
             state,
         )
-        assert blocked.returncode == 2
-        assert "failed 3 times" in blocked.stderr
+        assert "failed 3 times" in ask_reason(blocked)
         assert (
             invoke(
                 "pre-tool",
@@ -2221,7 +2271,7 @@ def test_tool_failure_fuse_is_scoped_to_one_session() -> None:
             ).returncode
             == 0
         )
-        assert (
+        assert ask_reason(
             invoke(
                 "pre-tool",
                 tool_payload(
@@ -2231,8 +2281,7 @@ def test_tool_failure_fuse_is_scoped_to_one_session() -> None:
                     session="session-a",
                 ),
                 state,
-            ).returncode
-            == 2
+            )
         )
         last_warning = None
         for index in range(3):
@@ -2336,8 +2385,7 @@ def test_v1_agent_resumes_migrate_into_rolling_history() -> None:
             state,
             extra_env={"AGENT_GUARD_AGENT_MAX": "100"},
         )
-        assert blocked.returncode == 2
-        assert "rolling agent guard" in blocked.stderr
+        assert "rolling agent guard" in ask_reason(blocked)
         assert len(load_state(state)["agent_history"]) == 12
 
 
@@ -2427,15 +2475,17 @@ def test_historical_resume_all_replay_allows_four_and_blocks_five() -> None:
         state = Path(tmp) / "state.json"
         seed_known_agents(state, [f"agent-{index}" for index in range(9)])
         codes = [
-            invoke(
-                "pre-tool",
-                send_payload(f"resume-{index}", f"agent-{index}"),
-                state,
-            ).returncode
+            outcome(
+                invoke(
+                    "pre-tool",
+                    send_payload(f"resume-{index}", f"agent-{index}"),
+                    state,
+                )
+            )
             for index in range(9)
         ]
-        assert codes.count(0) == 4, codes
-        assert codes.count(2) == 5, codes
+        assert codes.count("allow") == 4, codes
+        assert codes.count("ask") == 5, codes
 
 
 def test_historical_recursive_research_shape_is_stopped_at_first_nesting() -> None:
@@ -2454,21 +2504,21 @@ def test_historical_recursive_research_shape_is_stopped_at_first_nesting() -> No
             invoke("pre-tool", agent_payload("root-research-2"), state).returncode == 0
         )
         for index in range(20):
-            blocked = invoke(
-                "pre-tool",
-                agent_payload(
-                    f"nested-research-{index}",
-                    transcript=child,
-                ),
-                state,
-            )
-            assert blocked.returncode == 2
+            nested = agent_payload(f"nested-research-{index}", transcript=child)
+            blocked = invoke("pre-tool", nested, state)
+            decision, reason = tool_decision(blocked)
             if index < 4:
-                assert "nested-agent guard" in blocked.stderr
+                # Each nesting attempt escalates; the user answering 'no' is what
+                # advances the ladder toward the fuse.
+                assert decision == "ask", blocked.stdout
+                assert "nested-agent guard" in reason
+                decline(nested, state)
             else:
                 # The 5th identical denial trips the session agent fuse; the
-                # replayed storm stays mechanically denied from then on.
-                assert "agent fuse" in blocked.stderr
+                # replayed storm stays mechanically denied from then on, with
+                # no dialog to answer.
+                assert decision == "deny", blocked.stdout
+                assert "agent fuse" in reason
         guard_state = load_state(state)
         assert len(guard_state["agent_pending"]) == 2
         assert guard_state["agent_history"] == []
@@ -2490,14 +2540,16 @@ def blocked_agent_attempt(
     now: int = NOW,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    proc = invoke(
-        "pre-tool",
-        agent_payload(f"retry-{index}", description, session=session),
-        state,
-        now=now,
-        extra_env=extra_env,
-    )
-    assert proc.returncode == 2
+    """Attempt a refused agent call and answer any dialog it raises with 'no'.
+
+    Escalation is what advances the refusal ladder now: PreToolUse cannot know
+    the outcome, so only a real PermissionDenied counts as a denial. A hard deny
+    never reaches the user, so it raises no dialog to answer.
+    """
+    payload = agent_payload(f"retry-{index}", description, session=session)
+    proc = invoke("pre-tool", payload, state, now=now, extra_env=extra_env)
+    if tool_decision(proc)[0] == "ask":
+        decline(payload, state, now=now, extra_env=extra_env)
     return proc
 
 
@@ -2506,18 +2558,23 @@ def test_repeated_block_messages_escalate_and_never_repeat() -> None:
         state = Path(tmp) / "state.json"
         fill_active_slots(state)
         first = blocked_agent_attempt(state, 1)
-        assert "4 agents are already active" in first.stderr
-        assert "denial 1" in first.stderr
+        assert "4 agents are already active" in refusal_reason(first)
+        assert "denial 1" in refusal_reason(first)
         second = blocked_agent_attempt(state, 2)
-        assert "denial 2" in second.stderr
-        assert "4 agents are already active" in second.stderr
+        assert "denial 2" in refusal_reason(second)
+        assert "4 agents are already active" in refusal_reason(second)
         third = blocked_agent_attempt(state, 3)
-        assert "denial 3" in third.stderr
-        assert "end the turn" in third.stderr.lower()
+        assert "denial 3" in refusal_reason(third)
+        assert "end the turn" in refusal_reason(third).lower()
         fourth = blocked_agent_attempt(state, 4)
-        assert "denial 4" in fourth.stderr
-        assert "agent fuse" in fourth.stderr
-        texts = {first.stderr, second.stderr, third.stderr, fourth.stderr}
+        assert "denial 4" in refusal_reason(fourth)
+        assert "agent fuse" in refusal_reason(fourth)
+        texts = {
+            refusal_reason(first),
+            refusal_reason(second),
+            refusal_reason(third),
+            refusal_reason(fourth),
+        }
         assert len(texts) == 4
 
 
@@ -2534,12 +2591,12 @@ def test_first_denial_names_alternatives_not_only_the_condition() -> None:
         state = Path(tmp) / "state.json"
         fill_active_slots(state)
         first = blocked_agent_attempt(state, 1)
-        lowered = first.stderr.lower()
+        lowered = refusal_reason(first).lower()
         assert "denial 1" in lowered
         assert "identical retry" in lowered
         assert "other work" in lowered
         second = blocked_agent_attempt(state, 2)
-        assert first.stderr != second.stderr
+        assert refusal_reason(first) != refusal_reason(second)
 
 
 def test_fuse_warning_reports_configured_subminute_duration_exactly() -> None:
@@ -2553,8 +2610,8 @@ def test_fuse_warning_reports_configured_subminute_duration_exactly() -> None:
             4,
             extra_env={"AGENT_GUARD_BLOCK_FUSE_SECONDS": "90"},
         )
-        assert "for 90 seconds" in warning.stderr
-        assert "for 1 minutes" not in warning.stderr
+        assert "for 90 seconds" in refusal_reason(warning)
+        assert "for 1 minutes" not in refusal_reason(warning)
 
 
 def test_block_ladder_is_scoped_per_call_fingerprint() -> None:
@@ -2564,7 +2621,7 @@ def test_block_ladder_is_scoped_per_call_fingerprint() -> None:
         blocked_agent_attempt(state, 1, description="First blocked call")
         blocked_agent_attempt(state, 2, description="First blocked call")
         other = blocked_agent_attempt(state, 3, description="Different call")
-        assert "denial 1" in other.stderr
+        assert "denial 1" in refusal_reason(other)
 
 
 def test_agent_fuse_trips_blocks_session_scoped_and_expires() -> None:
@@ -2572,14 +2629,16 @@ def test_agent_fuse_trips_blocks_session_scoped_and_expires() -> None:
         state = Path(tmp) / "state.json"
         fill_active_slots(state)
         for index in range(1, 5):
-            blocked_agent_attempt(state, index)
+            # Each rung escalates to the user, who refuses.
+            assert ask_reason(blocked_agent_attempt(state, index))
+        # The attempt that trips the fuse stops asking and denies outright.
         tripped = blocked_agent_attempt(state, 5)
-        assert "agent fuse" in tripped.stderr
-        assert "tripped" in tripped.stderr
+        assert "agent fuse" in deny_reason(tripped)
+        assert "tripped" in deny_reason(tripped)
 
-        # A different agent call in the fused session is also denied.
+        # A different agent call in the fused session is denied without a dialog.
         other_call = blocked_agent_attempt(state, 6, description="Unrelated work")
-        assert "agent fuse" in other_call.stderr
+        assert "agent fuse" in deny_reason(other_call)
 
         # Free both slots so only the fuse can deny.
         assert (
@@ -2592,7 +2651,7 @@ def test_agent_fuse_trips_blocks_session_scoped_and_expires() -> None:
         assert invoke("subagent-stop", stop_payload("agent-two"), state).returncode == 0
 
         still_fused = blocked_agent_attempt(state, 7, description="Post-free work")
-        assert "agent fuse" in still_fused.stderr
+        assert "agent fuse" in deny_reason(still_fused)
 
         # The fuse is per-session: another session may spawn.
         assert (
@@ -2659,15 +2718,17 @@ def test_non_agent_blocks_escalate_but_never_trip_agent_fuse() -> None:
             )
         last = None
         for index in range(1, 7):
-            last = invoke(
-                "pre-tool",
-                tool_payload(f"retry-{index}", "Bash", bash_input, session="parent-a"),
-                state,
+            attempt = tool_payload(
+                f"retry-{index}", "Bash", bash_input, session="parent-a"
             )
-            assert last.returncode == 2
+            last = invoke("pre-tool", attempt, state)
+            # Non-agent trips escalate forever: only agent risk can trip the fuse,
+            # so the ladder keeps climbing without ever hard-denying.
+            assert ask_reason(last)
+            decline(attempt, state)
         assert last is not None
-        assert "denial 6" in last.stderr
-        assert "agent fuse" not in last.stderr
+        assert "denial 6" in refusal_reason(last)
+        assert "agent fuse" not in refusal_reason(last)
         # Agent actions in the same session are unaffected.
         assert invoke("pre-tool", agent_payload("still-fine"), state).returncode == 0
 
@@ -2738,14 +2799,13 @@ def test_invalid_and_below_minimum_environment_limits_are_safe() -> None:
                 ).returncode
                 == 0
             )
-        assert (
+        assert ask_reason(
             invoke(
                 "pre-tool",
                 agent_payload("invalid-5"),
                 invalid_state,
                 extra_env=invalid_env,
-            ).returncode
-            == 2
+            )
         )
 
         minimum_state = root / "minimum.json"
@@ -2759,14 +2819,13 @@ def test_invalid_and_below_minimum_environment_limits_are_safe() -> None:
             ).returncode
             == 0
         )
-        assert (
+        assert ask_reason(
             invoke(
                 "pre-tool",
                 agent_payload("minimum-2"),
                 minimum_state,
                 extra_env=minimum_env,
-            ).returncode
-            == 2
+            )
         )
 
 
@@ -2832,7 +2891,7 @@ def test_workflow_is_denied_for_every_current_input_shape() -> None:
                 tool_payload(f"workflow-{index}", "Workflow", shape),
                 state,
             )
-            assert blocked.returncode == 2
+            assert ask_reason(blocked)
         guard_state = load_state(state)
         assert guard_state["agent_pending"] == []
         assert guard_state["agent_leases"] == []
@@ -3100,13 +3159,16 @@ def test_second_pending_resume_to_the_same_target_is_blocked() -> None:
             invoke("pre-tool", send_payload("resume-1", "agent-x"), state).returncode
             == 0
         )
-        duplicate = invoke(
-            "pre-tool",
-            send_payload("resume-2", "agent-x"),
-            state,
-        )
-        assert duplicate.returncode == 2
-        assert "still awaiting confirmation" in duplicate.stderr
+        second = send_payload("resume-2", "agent-x")
+        duplicate = invoke("pre-tool", second, state)
+        assert "still awaiting confirmation" in ask_reason(duplicate)
+        # The escalated resume reserves while its dialog is open, so answering
+        # 'no' is what restores the single-pending-slot invariant.
+        assert {item["tool_use_id"] for item in load_state(state)["agent_pending"]} == {
+            "resume-1",
+            "resume-2",
+        }
+        decline(second, state)
         assert {item["tool_use_id"] for item in load_state(state)["agent_pending"]} == {
             "resume-1"
         }
@@ -3135,12 +3197,9 @@ def test_resume_aliases_resolving_to_same_agent_share_one_pending_slot() -> None
         assert (
             invoke("pre-tool", send_payload("by-name", "worker"), state).returncode == 0
         )
-        duplicate = invoke(
-            "pre-tool",
-            send_payload("by-type", "general-purpose"),
-            state,
-        )
-        assert duplicate.returncode == 2
+        by_type = send_payload("by-type", "general-purpose")
+        assert ask_reason(invoke("pre-tool", by_type, state))
+        decline(by_type, state)
         assert {item["tool_use_id"] for item in load_state(state)["agent_pending"]} == {
             "by-name"
         }
@@ -3332,8 +3391,7 @@ def test_remote_and_teammate_launch_statuses_hold_active_slots() -> None:
         assert invoke("pre-tool", agent_payload("filler-3"), state).returncode == 0
         assert invoke("pre-tool", agent_payload("filler-4"), state).returncode == 0
         blocked = invoke("pre-tool", agent_payload("fifth-launch"), state)
-        assert blocked.returncode == 2
-        assert "already active or reserved" in blocked.stderr
+        assert "already active or reserved" in ask_reason(blocked)
 
 
 def test_async_launch_without_response_id_waits_for_lifecycle_id() -> None:
@@ -4086,7 +4144,11 @@ Path(os.environ["AGENT_GUARD_DEMO_CAPTURE"]).write_text(json.dumps({{
         assert args[args.index("--session-id") + 1]
         assert "--strict-mcp-config" in args
         assert "--exclude-dynamic-system-prompt-sections" in args
-        assert args[args.index("--permission-mode") + 1] == "bypassPermissions"
+        # A guard trip has to raise a dialog for the recording to show the
+        # guard's own message, and bypassPermissions suppresses that dialog.
+        assert args[args.index("--permission-mode") + 1] == "manual"
+        allowed = args.index("--allowedTools")
+        assert args[allowed + 1 : allowed + 3] == ["Agent", "Read"]
 
 
 def test_demo_launcher_reports_missing_claude_cli() -> None:
@@ -4110,16 +4172,29 @@ def test_demo_gif_visual_contract_is_valid_animated_and_documented() -> None:
     assert (width, height) == (1200, 640)
     assert frames >= 24
     assert duration >= 100
+    # Pinned so the asset cannot be swapped silently. Re-record with
+    # `vhs demo/agent-usage-guard.tape`, then update this digest from
+    # `sha256sum assets/agent-usage-guard.gif`.
     assert (
         hashlib.sha256(gif.read_bytes()).hexdigest()
         == "c97e29be69d0178458788709c4a4e53f133396c84529b046b64d82d3bbb77613"
     )
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert 'src="assets/agent-usage-guard.gif"' in readme
-    assert "real interactive Claude Code UI" in readme
+    assert "Claude Code's interactive UI" in readme
+    assert "the guard's own hook output, not the model describing it" in readme
     tape = (ROOT / "demo" / "agent-usage-guard.tape").read_text(encoding="utf-8")
     assert "Output assets/agent-usage-guard.gif" in tape
-    assert "Wait+Screen@120s /GUARD TRIGGERED/" in tape
+    # The recording must wait on the guard's own words. The previous tape told
+    # Claude to write "GUARD TRIGGERED" and waited for that, so the headline
+    # asset showed model prose paraphrasing a denial rather than the denial -
+    # and kept passing after the default ceiling moved from two agents to four.
+    assert "Wait+Screen@120s /4 agents are already active/" in tape
+    for narration in ("GUARD TRIGGERED", "uppercase", "immediately write"):
+        assert narration not in tape, narration
+    # The dialog only exists in a mode that prompts.
+    runner = (ROOT / "demo" / "run_demo.py").read_text(encoding="utf-8")
+    assert '"bypassPermissions"' not in runner
 
 
 def test_documented_test_count_matches_discovered_suite() -> None:
@@ -4212,35 +4287,173 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert expansion_decision["reason"] == expansion.stderr.strip()
 
 
+def test_tool_trips_escalate_to_the_user_instead_of_denying() -> None:
+    """A tool-side guard trip raises Claude Code's own permission dialog.
+
+    UserPromptSubmit has no interactive decision, so prompt-side guards stay hard
+    blocks and the user has to answer them by typing an escape marker. PreToolUse
+    does have one, so the same refusal becomes a single keystroke. Exit status
+    must be 0: a 2 denies outright and would override the dialog.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        escalated = invoke(
+            "pre-tool",
+            tool_payload("workflow-json", "Workflow", {"workflow": "research"}),
+            state,
+        )
+        assert escalated.returncode == 0, escalated.stderr
+        specific = json.loads(escalated.stdout)["hookSpecificOutput"]
+        assert specific["hookEventName"] == "PreToolUse"
+        assert specific["permissionDecision"] == "ask"
+        assert specific["permissionDecisionReason"].startswith(
+            "BLOCKED by agent-usage-guard"
+        )
+        # An ask carries no stderr fallback: the document is the only signal.
+        assert escalated.stderr.strip() == ""
+
+
 def test_tool_denials_carry_an_unprefixed_permission_decision() -> None:
-    """PreToolUse denials use the decision shape so the reason reaches the model clean.
+    """The two hard-refusal states still deny, with the reason reaching the model clean.
 
     The reason is fed back to the model, so a leading ``[python3 "${...}" pre-tool]:``
     spent context on every agent-budget denial.
     """
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
-        blocked = invoke(
-            "pre-tool",
-            tool_payload("workflow-json", "Workflow", {"workflow": "research"}),
-            state,
-        )
-        assert blocked.returncode == 2
-        specific = json.loads(blocked.stdout)["hookSpecificOutput"]
+        fill_active_slots(state)
+        for index in range(1, 5):
+            blocked_agent_attempt(state, index)
+        tripped = blocked_agent_attempt(state, 5)
+        assert tripped.returncode == 2
+        specific = json.loads(tripped.stdout)["hookSpecificOutput"]
         assert specific["hookEventName"] == "PreToolUse"
         assert specific["permissionDecision"] == "deny"
         assert specific["permissionDecisionReason"].startswith(
             "BLOCKED by agent-usage-guard"
         )
-        assert specific["permissionDecisionReason"] == blocked.stderr.strip()
+        assert specific["permissionDecisionReason"] == tripped.stderr.strip()
 
 
-def test_denied_agent_leaves_no_reservation_residue() -> None:
-    """A denied Agent call must not leave a lease, reservation, or history row.
+def test_modes_that_never_prompt_refuse_outright_instead_of_escalating() -> None:
+    """A mode with no dialog to raise must deny, not ask.
 
-    This is the accounting the decision document was suspected of disturbing:
-    if a denial were mistaken for a permission rollback, or a reservation
-    survived a denial, the rolling budget would drift away from reality.
+    bypassPermissions approves everything and dontAsk is defined by not asking,
+    so an escalation raised in either would be auto-approved - silently removing
+    the guard's teeth in exactly the mode where a runaway is most likely. The
+    demo runner itself uses bypassPermissions.
+    """
+    for mode in ("bypassPermissions", "dontAsk"):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            env = {"AGENT_GUARD_AGENT_MAX": "1"}
+            first = agent_payload("mode-first", session="modes")
+            first["permission_mode"] = mode
+            assert invoke("pre-tool", first, state, extra_env=env).returncode == 0
+
+            second = agent_payload("mode-second", session="modes")
+            second["permission_mode"] = mode
+            refused = invoke("pre-tool", second, state, extra_env=env)
+            assert "already active or reserved" in deny_reason(refused), mode
+            # A hard refusal leaves no residue and needs no PermissionDenied.
+            guard_state = load_state(state)
+            assert not any(
+                item.get("tool_use_id") == "mode-second"
+                for item in guard_state["agent_pending"]
+            ), mode
+            # The ladder still advances without a user answer to record.
+            assert len(guard_state["block_events"]) == 1, mode
+
+            third = agent_payload("mode-third", session="modes")
+            third["permission_mode"] = mode
+            assert "denial 2" in deny_reason(
+                invoke("pre-tool", third, state, extra_env=env)
+            ), mode
+
+
+def test_prompting_modes_still_escalate() -> None:
+    for mode in ("default", "plan", "acceptEdits", "auto"):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            env = {"AGENT_GUARD_AGENT_MAX": "1"}
+            first = agent_payload("mode-first", session="modes")
+            first["permission_mode"] = mode
+            assert invoke("pre-tool", first, state, extra_env=env).returncode == 0
+
+            second = agent_payload("mode-second", session="modes")
+            second["permission_mode"] = mode
+            assert "already active or reserved" in ask_reason(
+                invoke("pre-tool", second, state, extra_env=env)
+            ), mode
+
+
+def test_approved_escalated_agent_is_still_counted_against_the_budget() -> None:
+    """Approving an escalated call must not smuggle an uncounted agent past the budget.
+
+    This is why the reservation is written optimistically rather than only on the
+    allow path. PostToolUse and SubagentStart both bind an existing reservation;
+    with none to bind, an approved agent would run entirely outside the rolling
+    budget, which is exactly the runaway the guard exists to prevent.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        env = {"AGENT_GUARD_AGENT_MAX": "1"}
+        assert (
+            invoke(
+                "pre-tool",
+                agent_payload("agent-first", session="approve"),
+                state,
+                extra_env=env,
+            ).returncode
+            == 0
+        )
+        escalated = invoke(
+            "pre-tool",
+            agent_payload("agent-second", session="approve", agent_type="reviewer"),
+            state,
+            extra_env=env,
+        )
+        assert ask_reason(escalated)
+
+        # The user allows it, so no PermissionDenied ever arrives and the agent
+        # starts for real. A distinct type makes the binding unambiguous.
+        assert (
+            invoke(
+                "subagent-start",
+                start_payload(
+                    "agent-second-id",
+                    session="approve",
+                    agent_type="reviewer",
+                ),
+                state,
+                extra_env=env,
+            ).returncode
+            == 0
+        )
+        guard_state = load_state(state)
+        leased = [
+            item
+            for item in guard_state["agent_leases"]
+            if item["tool_use_id"] == "agent-second"
+        ]
+        assert len(leased) == 1, guard_state["agent_leases"]
+        assert leased[0]["source"] == "confirmed_start"
+        assert leased[0]["agent_id"] == "agent-second-id"
+        # The approved agent is now leased rather than lost, so the first
+        # reservation is the only thing still outstanding.
+        assert [item["tool_use_id"] for item in guard_state["agent_pending"]] == [
+            "agent-first"
+        ]
+
+
+def test_escalated_agent_reserves_then_leaves_no_residue_when_refused() -> None:
+    """An escalated Agent call reserves, then unwinds cleanly if the user says no.
+
+    Escalation splits a decision that used to be atomic. PreToolUse no longer
+    knows the outcome, and PostToolUse ignores any call with no reservation
+    behind it, so the reservation has to be written optimistically or an approved
+    agent would run uncounted. PermissionDenied is what unwinds it. If either
+    half broke, the rolling budget would drift away from reality.
     """
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
@@ -4253,24 +4466,21 @@ def test_denied_agent_leaves_no_reservation_residue() -> None:
         )
         assert allowed.returncode == 0
 
-        denied = invoke(
-            "pre-tool",
-            agent_payload("agent-second", session="residue"),
-            state,
-            extra_env=env,
-        )
-        assert denied.returncode == 2
-        assert (
-            json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"]
-            == "deny"
-        )
+        second = agent_payload("agent-second", session="residue")
+        escalated = invoke("pre-tool", second, state, extra_env=env)
+        assert ask_reason(escalated)
+        assert any(
+            item.get("tool_use_id") == "agent-second"
+            for item in load_state(state)["agent_pending"]
+        ), "an escalated agent must hold a reservation while its dialog is open"
 
+        decline(second, state, extra_env=env)
         guard_state = load_state(state)
         for bucket in ("agent_pending", "agent_leases", "agent_history"):
             assert not any(
                 item.get("tool_use_id") == "agent-second"
                 for item in guard_state[bucket]
-            ), f"denied agent left residue in {bucket}"
+            ), f"refused agent left residue in {bucket}"
 
 
 def test_allowed_prompts_never_emit_a_block_decision() -> None:

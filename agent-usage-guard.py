@@ -1332,6 +1332,57 @@ def block_tool(message: str) -> int:
     return block(message)
 
 
+#: Permission modes that suppress the dialog a ``PreToolUse`` ask depends on.
+#: ``bypassPermissions`` approves everything and ``dontAsk`` is defined by not
+#: asking, so an escalation raised in either would be answered without ever
+#: reaching the user. The remaining modes still prompt for tool calls.
+SILENT_PERMISSION_MODES = frozenset({"bypassPermissions", "dontAsk"})
+
+
+def prompts_the_user(payload: dict[str, Any]) -> bool:
+    """Report whether this session would actually show a permission dialog.
+
+    Escalating into a mode that never prompts would be strictly worse than
+    denying: the call is auto-approved and the guard silently stops enforcing.
+    A payload with no ``permission_mode`` is treated as prompting, because the
+    field is documented as absent on some events and the escalation is the
+    intended behaviour.
+    """
+    return payload.get("permission_mode") not in SILENT_PERMISSION_MODES
+
+
+def ask_tool(message: str) -> int:
+    """Escalate a tool call to the user instead of denying it outright.
+
+    ``UserPromptSubmit`` has no interactive decision, so prompt-side guards stay
+    hard blocks. ``PreToolUse`` does: ``permissionDecision: "ask"`` renders Claude
+    Code's own permission dialog, which turns a denial the user had to answer by
+    typing an escape marker into a single keystroke.
+
+    The exit status is 0, not 2. A 2 denies the call outright and would override
+    the dialog, so the decision document has to be the only signal here.
+
+    Escalating splits a decision that used to be atomic. ``block_tool`` knew the
+    call was refused and could record the refusal inline; an ask does not know
+    the outcome yet, so the caller records the reservation optimistically and
+    :func:`permission_denied` unwinds it - and records the refusal - if the user
+    says no.
+    """
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": message,
+                }
+            },
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
 def add_context(event_name: str, message: str) -> int:
     print(
         json.dumps(
@@ -1820,6 +1871,7 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
     )
     is_agent_risk = is_workflow or is_direct_agent_action
     block_reason = ""
+    hard_deny = False
     known_target_agent_id = ""
     duplicate_pending_target = False
 
@@ -2051,7 +2103,75 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "Wait for the window to clear."
                     )
 
-                if not block_reason and is_direct_agent_action:
+            # A guard trip escalates to the user rather than denying outright, so
+            # the outcome is unknown here and the refusal ladder cannot advance.
+            # permission_denied records the block event if the user declines.
+            # Two states still refuse without asking: a fuse that is already
+            # burning, and the attempt that trips it.
+            if block_reason:
+                fuse_max = env_int(
+                    "AGENT_GUARD_BLOCK_FUSE_MAX",
+                    DEFAULT_BLOCK_FUSE_MAX,
+                    2,
+                )
+                if laddered:
+                    hard_deny = True
+                elif (
+                    is_agent_risk
+                    and attempt >= fuse_max
+                    and not (agent_bypass or usage_bypass)
+                ):
+                    until = now + env_int(
+                        "AGENT_GUARD_BLOCK_FUSE_SECONDS",
+                        DEFAULT_BLOCK_FUSE_SECONDS,
+                        1,
+                    )
+                    state["agent_fuses"][sid] = until
+                    block_reason = fuse_trip_message(
+                        attempt,
+                        now,
+                        until,
+                        window,
+                    )
+                    hard_deny = True
+                else:
+                    block_reason = ladder_message(
+                        block_reason,
+                        attempt,
+                        now,
+                        is_agent_risk,
+                        fuse_max,
+                    )
+                    # A mode that suppresses prompting has no dialog to raise, so
+                    # an ask would most likely be auto-approved - silently
+                    # removing the guard's teeth in exactly the mode where a
+                    # runaway is most likely. Refuse outright instead.
+                    hard_deny = not prompts_the_user(payload)
+
+                if hard_deny:
+                    # No PermissionDenied follows a hard refusal, so the ladder
+                    # has to be advanced here rather than by the user's answer.
+                    state["block_events"].append(
+                        {
+                            "at": now,
+                            "retention_until": now + MAX_WINDOW_SECONDS,
+                            "session_id": sid,
+                            "fingerprint": fingerprint,
+                        }
+                    )
+
+            # An escalated call may still run, and PostToolUse ignores any call
+            # with no reservation behind it, so reserve exactly as the allowed
+            # path does. permission_denied releases both writes on a refusal.
+            if not hard_deny:
+                if is_direct_agent_action and not any(
+                    item.get("tool_use_id") == tool_id and item.get("session_id") == sid
+                    for item in (
+                        state["agent_pending"]
+                        + state["agent_leases"]
+                        + state["agent_history"]
+                    )
+                ):
                     stored_path, stored_offset = transcript_offset(payload)
                     agent_type = (
                         tool_input.get("subagent_type")
@@ -2091,47 +2211,6 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     }
                     state["agent_pending"].append(entry)
 
-            if block_reason:
-                state["block_events"].append(
-                    {
-                        "at": now,
-                        "retention_until": now + MAX_WINDOW_SECONDS,
-                        "session_id": sid,
-                        "fingerprint": fingerprint,
-                    }
-                )
-                if not laddered:
-                    fuse_max = env_int(
-                        "AGENT_GUARD_BLOCK_FUSE_MAX",
-                        DEFAULT_BLOCK_FUSE_MAX,
-                        2,
-                    )
-                    if (
-                        is_agent_risk
-                        and attempt >= fuse_max
-                        and not (agent_bypass or usage_bypass)
-                    ):
-                        until = now + env_int(
-                            "AGENT_GUARD_BLOCK_FUSE_SECONDS",
-                            DEFAULT_BLOCK_FUSE_SECONDS,
-                            1,
-                        )
-                        state["agent_fuses"][sid] = until
-                        block_reason = fuse_trip_message(
-                            attempt,
-                            now,
-                            until,
-                            window,
-                        )
-                    else:
-                        block_reason = ladder_message(
-                            block_reason,
-                            attempt,
-                            now,
-                            is_agent_risk,
-                            fuse_max,
-                        )
-            else:
                 state["tool_events"].append(
                     {
                         "id": tool_id,
@@ -2149,7 +2228,9 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             )
         return 0
 
-    return block_tool(block_reason) if block_reason else 0
+    if not block_reason:
+        return 0
+    return block_tool(block_reason) if hard_deny else ask_tool(block_reason)
 
 
 def tool_failure(payload: dict[str, Any], now: float, window: int) -> int:
@@ -2753,6 +2834,18 @@ def permission_denied(payload: dict[str, Any], now: float, window: int) -> int:
                         and item.get("session_id") == sid
                     )
                 ]
+            # An escalated guard trip cannot know at PreToolUse time whether the
+            # user will allow it, so the refusal ladder is advanced here instead.
+            # Only a real refusal counts; an approved call costs nothing.
+            if isinstance(tool_input, dict):
+                state["block_events"].append(
+                    {
+                        "at": now,
+                        "retention_until": now + MAX_WINDOW_SECONDS,
+                        "session_id": sid,
+                        "fingerprint": tool_fingerprint(tool_name, tool_input),
+                    }
+                )
     except OSError:
         pass
     return 0

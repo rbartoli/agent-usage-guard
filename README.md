@@ -5,11 +5,11 @@
 `agent-usage-guard` is a local runtime circuit breaker for Claude Code. It **blocks** runaway spend before it happens: subagent fan-out bursts, high-context churn, retry loops, and hammering the API after a rate limit.
 
 <p align="center">
-  <img src="assets/agent-usage-guard.gif" alt="The real interactive Claude Code UI reports that agent-usage-guard stopped additional audit agents during a parallel fan-out." width="900">
+  <img src="assets/agent-usage-guard.gif" alt="Claude Code's own permission dialog carrying agent-usage-guard's message, raised when a fifth parallel audit agent hit the four-agent ceiling." width="900">
 </p>
 
 <p align="center">
-  <sub>Recorded directly from Claude Code's interactive UI against the fictional <a href="demo/fixture/northstar-api">Northstar API fixture</a>—no print mode, custom transcript renderer, or user project/session data. <a href="demo/agent-usage-guard.tape">Reproduce it with VHS</a> (contacts Claude and consumes usage).</sub>
+  <sub>Recorded directly from Claude Code's interactive UI against the fictional <a href="demo/fixture/northstar-api">Northstar API fixture</a>—no print mode, custom transcript renderer, or user project/session data. The text on screen is the guard's own hook output, not the model describing it. <a href="demo/agent-usage-guard.tape">Reproduce it with VHS</a> (contacts Claude and consumes usage).</sub>
 </p>
 
 Most usage tools are **monitors**: they tell you what you spent after you spent it. This is a **gate**: it denies the call before it runs and tells Claude why, so the model can wait, batch the work, or stop the loop.
@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 125 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 129 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -62,9 +62,15 @@ identical retry fails again. Alternatives that work: proceed without this call,
 pick other work, or report back]
 ```
 
-That message goes to **the model**, not just to you: the blocked tool call is cancelled and the reason is fed back into the loop, so Claude course-corrects — waits, batches the work, or asks you — instead of burning through your window. Your session keeps working; the burst doesn't.
+That message goes to **the model**, not just to you: the reason is fed back into the loop, so Claude course-corrects — waits, batches the work, or asks you — instead of burning through your window. Your session keeps working; the burst doesn't.
 
-And if the model retries the denied tool call anyway? **Every repeat denial of that call is differently worded** — repeating byte-identical error text is exactly what makes agent retry loops deterministic. Denial 2 tells it the condition hasn't changed and to do something different; denial 3 tells it to end the turn; the 5th identical attempt trips a **session-wide agent fuse** that mechanically ends the loop. A guard that provokes retries would waste more tokens than it saves — this one is engineered not to.
+On a **tool call**, it also goes to you as Claude Code's own permission dialog. A guard trip raises `permissionDecision: "ask"` rather than refusing outright, so overriding a limit you meant to cross is a single keystroke instead of a retyped prompt with an escape marker in it. Refusing is the same keystroke, and the reason is on screen while you choose.
+
+In `bypassPermissions` and `dontAsk` there is no dialog to raise, so a tool trip **denies outright** there instead — an ask in those modes would be answered without ever reaching you, which is strictly worse than a denial. The guard reads `permission_mode` off the hook payload to tell the difference.
+
+**Prompt-side guards stay hard blocks**, because `UserPromptSubmit` has no interactive decision to return — and for the context guards it could not have one anyway: the API call that would carry the question *is* the context rebuild those guards exist to prevent. Those you still answer with an escape marker.
+
+And if the model retries the escalated tool call after you refuse it? **Every repeat refusal of that call is differently worded** — repeating byte-identical error text is exactly what makes agent retry loops deterministic. Denial 2 tells it the condition hasn't changed and to do something different; denial 3 tells it to end the turn; the 5th refusal trips a **session-wide agent fuse** that mechanically ends the loop. Past that point the guard stops asking and denies outright, so a burning fuse costs you no keystrokes at all. Only your refusals advance that ladder — approving a call costs it nothing.
 
 When you *mean* to fan out, put `[allow-agent-burst]` alone on the first non-blank line of your prompt. It lifts the agent limits for ten minutes.
 
@@ -74,12 +80,12 @@ Six independent protections, all thresholds env-tunable:
 
 | # | Protection | Default | Verdict on breach |
 |---|---|---|---|
-| 1 | **Rate-limit circuit breaker** — after Claude reports an account/session/spend limit, blocks prompts and agent spawns until the parsed reset time; model-only Opus exhaustion remains switchable | 5 min–1 h fallback | block |
-| 2 | **Agent budgets** — provisional permission-safe reservations; max concurrent subagents; max confirmed starts per rolling window (completion does **not** reset it); subagent context ceiling; dormant heavy-session resume cap | 4 active/reserved · 12 / 10 min · 1 dormant resume | block |
-| 3 | **Context gates** — warn at high session context, hard-stop at extreme context; rolling-window tool budget once context is heavy | warn 300k · block 500k · 20 tools / 10 min @ 400k | warn → block |
-| 4 | **Opaque Workflow gate** — denies Workflow before execution, including bundled `/deep-research`; an explicitly bypassed Workflow is observed through child lifecycle events | deny by default | block |
-| 5 | **Tool-error fuse** — after N identical tool failures, blocks the identical retry | 3 failures | block |
-| 6 | **Escalating denial ladder + agent fuse** — repeat `PreToolUse` denials of the same call are never byte-identical and escalate (changed condition info → end-the-turn instruction); repeated agent-call denials trip a session-wide agent fuse | fuse at 5 denials / 10 min | escalate → fuse |
+| 1 | **Rate-limit circuit breaker** — after Claude reports an account/session/spend limit, blocks prompts and gates agent spawns until the parsed reset time; model-only Opus exhaustion remains switchable | 5 min–1 h fallback | block prompt · ask tool |
+| 2 | **Agent budgets** — provisional permission-safe reservations; max concurrent subagents; max confirmed starts per rolling window (completion does **not** reset it); subagent context ceiling; dormant heavy-session resume cap | 4 active/reserved · 12 / 10 min · 1 dormant resume | ask · block dormant resume |
+| 3 | **Context gates** — warn at high session context, hard-stop at extreme context; rolling-window tool budget once context is heavy | warn 300k · block 500k · 20 tools / 10 min @ 400k | warn → block · ask tool |
+| 4 | **Opaque Workflow gate** — gates Workflow before execution, including bundled `/deep-research`; an explicitly bypassed Workflow is observed through child lifecycle events | gated by default | ask tool · block expansion |
+| 5 | **Tool-error fuse** — after N identical tool failures, gates the identical retry | 3 failures | ask |
+| 6 | **Escalating denial ladder + agent fuse** — repeat `PreToolUse` refusals of the same call are never byte-identical and escalate (changed condition info → end-the-turn instruction); repeated agent-call refusals trip a session-wide agent fuse, which denies without asking | fuse at 5 refusals / 10 min | escalate → deny |
 
 Broad "resume/spawn ALL my agents" prompts are also blocked (with negation detection, so "don't spawn all agents" passes).
 
@@ -92,9 +98,11 @@ Claude Code's hook model limits what *any* hook-based guard can do. Verified aga
 | Plugin/settings `PreToolUse` firing on tool calls **inside** a subagent | **Supported in 2.1.220.** Common hook fields include `agent_id` and `agent_type`; the guard uses them to deny nested Agent and Workflow calls |
 | `SubagentStart` blocking a spawn | **Not supported** — exit 2 shows an error but the agent still runs |
 | Nested spawns (subagent → subagent) | Native default depth is three in 2.1.220. Direct nested Agent/Workflow tool calls pass through this guard; user-started fork paths below remain different |
-| `Workflow`, including `/deep-research` | **Denied before execution by default.** Workflow scripts are dynamic and can create agents without a blockable per-child hook, so static child counting would be unsound |
+| `Workflow`, including `/deep-research` | **Gated before execution by default** — escalated to you on a tool call, denied outright in a mode that never prompts. Workflow scripts are dynamic and can create agents without a blockable per-child hook, so static child counting would be unsound |
 | `/subtask` and forked-skill launches | **Observed only, not pre-blockable in 2.1.220.** Live testing found that `/subtask` bypasses `UserPromptSubmit`, `UserPromptExpansion`, and `PreToolUse`; only non-blocking `SubagentStart` ran. Use native caps as defense in depth, and avoid these paths when a strict pre-spend guarantee is required |
 | A manually denied Agent permission | Manual and permission-rule denials do not emit `PermissionDenied`. The guard keeps a provisional reservation, reconciles the real `tool_result` from the parent transcript, and expires unresolved reservations after five minutes |
+| `bypassPermissions` / `dontAsk` | **No dialog exists to raise.** A hook `ask` in these modes would be auto-answered, so tool-side trips fall back to a hard `deny` and record the refusal inline. Behaviour there is identical to before escalation existed |
+| Refusing a guard-raised `ask` dialog | **Reservation cleanup is safe either way** — it is released by `PermissionDenied` if that fires, and otherwise reconciled from the transcript or expired after five minutes, exactly like a manual denial. The **refusal ladder** is the part that depends on `PermissionDenied`: if refusing a hook-raised `ask` behaves like a manual denial and emits nothing, the tool-side ladder stops advancing and the agent fuse never trips, so the guard keeps asking instead of escalating. Budgets, reservations, and every other protection are unaffected |
 | Subagent-attributed context accounting | **Delayed and best-effort** — the guard reads the documented `agent_transcript_path` at `SubagentStop`; a running agent's unreported usage and requests older than the 4 MiB transcript tail are not yet counted |
 | `SendMessage` to a teammate vs. a resumed subagent | **Exact for observed subagent IDs/names.** Plain text to a known stopped target reserves a resume; active-agent steering, structured shutdown/approval messages, and unknown targets do not |
 
@@ -198,12 +206,12 @@ in Claude Code 2.1.220; see the limitations table above.
 ## Design notes
 
 - **State** is a single JSON file guarded by `flock` and written atomically (`mkstemp` + `fsync` + `rename`); on supported systems, concurrent Claude processes share it safely.
-- **Permission accounting is two-phase.** `PreToolUse` reserves capacity; `SubagentStart` or successful `PostToolUse` confirms it. Manual denials are reconciled from the transcript and unresolved reservations self-expire.
+- **Permission accounting is two-phase.** `PreToolUse` reserves capacity — including for a call it escalates, since an approved one would otherwise run uncounted; `SubagentStart` or successful `PostToolUse` confirms it. `PermissionDenied` releases the reservation and records the refusal. Manual denials are reconciled from the transcript and unresolved reservations self-expire.
 - **Latest-request reads scan backwards.** Ordinary tool hooks stop after finding the newest real assistant request instead of parsing the complete transcript tail.
 - **State-dependent checks fail open.** A guard that can crash your session is worse than no guard; pure prompt checks still work when state is unavailable.
-- **Repeated tool-call denials never repeat byte-identical text.** Each carries the attempt number, local wall clock, and an instruction that escalates with each retry, ending in a mechanical session fuse for agent calls.
+- **Repeated tool-call refusals never repeat byte-identical text.** Each carries the attempt number, local wall clock, and an instruction that escalates with each retry, ending in a mechanical session fuse for agent calls. Only a real refusal advances the ladder, so approving a call never counts against you.
 - **Bounded retention** — rolling records self-prune and have cardinality caps; compaction boundaries clear after a newer request and are capped globally.
-- Exit `0` allows, exit `2` blocks (stderr becomes the model-visible reason); soft notices use `hookSpecificOutput.additionalContext`.
+- Exit `0` allows, exit `2` blocks (stderr becomes the model-visible reason); a tool-side trip instead exits `0` with `permissionDecision: "ask"`, which is why that path carries no stderr fallback; soft notices use `hookSpecificOutput.additionalContext`.
 
 ## Tests
 

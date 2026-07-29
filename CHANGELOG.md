@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+- Escalate `PreToolUse` guard trips to the user instead of denying them
+  outright. A tripped agent budget, context gate, tool-error fuse, or Workflow
+  now returns `permissionDecision: "ask"`, which raises Claude Code's own
+  permission dialog: overriding a limit you meant to cross is a keystroke
+  rather than a retyped prompt carrying an escape marker. Prompt-side guards
+  are unchanged, because `UserPromptSubmit` has no interactive decision - and
+  for the context guards it could not have one anyway, since the API call that
+  would carry the question is the context rebuild they exist to prevent.
+- Reserve capacity for an escalated call rather than only for an allowed one.
+  `PostToolUse` ignores any call with no reservation behind it, so an approved
+  escalation would otherwise have run entirely outside the rolling budget.
+  `PermissionDenied` releases the reservation on a refusal, as it already did.
+- Fall back to a hard `deny` in `bypassPermissions` and `dontAsk`, which
+  suppress the dialog an ask depends on. An escalation raised there would be
+  auto-approved, silently disabling every tool-side guard in exactly the mode
+  where a runaway is most likely - the demo runner itself uses
+  bypassPermissions. The guard reads `permission_mode` off the payload.
+- Rebuild the terminal demo so the recording shows the guard rather than a
+  paraphrase of it. The old tape instructed Claude to write "GUARD TRIGGERED"
+  and waited for that string, so the headline asset carried model prose, not
+  hook output - and it kept passing after 0.2.0 moved the default ceiling from
+  two agents to four, leaving a GIF that stated a limit the guard no longer
+  had and showed the "denied" agent as finished. The prompt now simply asks for
+  five parallel audits against a ceiling of four, the runner drops
+  bypassPermissions so the permission dialog can render the guard's own
+  message, and the wait matches that hook text. Tests reject a tape that tells
+  the model what to say.
+- Advance the refusal ladder from `PermissionDenied` rather than at
+  `PreToolUse`. An ask has no outcome at decision time, so recording it inline
+  would have charged a denial to a call the user approved. Only real refusals
+  now count, and the two hard-refusal states - a burning agent fuse and the
+  attempt that trips it - still deny with exit 2 and raise no dialog.
+
 ## 0.2.0 — 2026-07-27
 
 - Recalibrate the default agent budgets for real-world parallel work: four
