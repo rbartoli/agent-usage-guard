@@ -1387,9 +1387,16 @@ def ladder_message(
 
     clock = format_clock(now)
     if attempt <= 1:
+        # Naming the alternatives here, not only at denial 2, is a deliberate
+        # trade: a handful of extra tokens against a retry that re-sends the
+        # entire conversation. Transcript analysis put the identical-retry rate
+        # near 44%, with escalation dropping sharply at the first rung that
+        # offers a way forward.
         return (
             f"{base} [denial 1 of this exact call at {clock}; it stays denied "
-            "while the condition holds]"
+            "while the condition holds, so an identical retry fails again. "
+            "Alternatives that work: proceed without this call, pick other "
+            "work, or report back]"
         )
     if attempt == 2:
         return (

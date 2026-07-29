@@ -22,6 +22,13 @@
 - Keep compaction boundaries beyond the rolling window and avoid globally
   blocking other models after an Opus-only limit.
 - Require escape markers as standalone first-line directives.
+- Name the alternatives in the first denial, not only from the second. Mining
+  130 real denials out of local transcripts put the identical-retry rate near
+  44%, with escalation dropping sharply at denial 2 - the first rung that
+  offered a way forward, where denial 1 had stated only the condition. A few
+  extra tokens are cheap against a retry that re-sends the whole conversation.
+  The wording stays factual rather than imperative and byte-distinct from the
+  later rungs.
 - Say so when a prompt opens with an escape marker but puts other text on the
   same line. The matcher stays strict - that is what stops a marker quoted in
   prose from lifting the limits - but a misplaced marker no longer fails

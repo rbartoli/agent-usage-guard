@@ -2521,6 +2521,27 @@ def test_repeated_block_messages_escalate_and_never_repeat() -> None:
         assert len(texts) == 4
 
 
+def test_first_denial_names_alternatives_not_only_the_condition() -> None:
+    """Denial 1 must offer a way forward, not just state that the call failed.
+
+    Mining 130 real denials from local transcripts found ~44% were retried with
+    the identical call, and escalation fell ~70% at denial 2 - the first rung
+    that names alternatives. Denial 1 stated only the condition, so the cheapest
+    hypothesis is that naming alternatives, not repetition, is what stops the
+    retry. It stays factual rather than imperative, and distinct from rung 2.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        fill_active_slots(state)
+        first = blocked_agent_attempt(state, 1)
+        lowered = first.stderr.lower()
+        assert "denial 1" in lowered
+        assert "identical retry" in lowered
+        assert "other work" in lowered
+        second = blocked_agent_attempt(state, 2)
+        assert first.stderr != second.stderr
+
+
 def test_fuse_warning_reports_configured_subminute_duration_exactly() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"

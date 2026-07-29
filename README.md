@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 124 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 125 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -57,7 +57,9 @@ The next runaway burst hits a wall — and the model can read the wall:
 ```text
 BLOCKED by agent-usage-guard's active-agent guard: 4 agents are already active.
 Wait for one to finish before starting or resuming another. [denial 1 of this
-exact call at 14:32:07; it stays denied while the condition holds]
+exact call at 14:32:07; it stays denied while the condition holds, so an
+identical retry fails again. Alternatives that work: proceed without this call,
+pick other work, or report back]
 ```
 
 That message goes to **the model**, not just to you: the blocked tool call is cancelled and the reason is fed back into the loop, so Claude course-corrects — waits, batches the work, or asks you — instead of burning through your window. Your session keeps working; the burst doesn't.
