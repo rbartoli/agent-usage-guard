@@ -4260,6 +4260,86 @@ def test_allowed_prompts_never_emit_a_block_decision() -> None:
         assert '"decision"' not in allowed.stdout
 
 
+NEAR_MISS_HINT = "alone on the first non-blank line"
+
+
+def test_near_miss_override_marker_is_reported_not_silently_dropped() -> None:
+    """A marker with trailing text on its line must not fail silently.
+
+    ``has_override_directive`` requires the marker to be the whole first
+    non-blank line. Typing ``[allow-usage-guard] continue`` therefore arms
+    nothing, and before this the prompt was simply denied again with no clue
+    why the bypass had not taken effect.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        denied = invoke(
+            "prompt",
+            prompt_payload("[allow-usage-guard] continue", session="near-miss"),
+            state,
+        )
+        assert denied.returncode == 2
+        assert NEAR_MISS_HINT in denied.stderr
+        assert "[allow-usage-guard]" in denied.stderr
+
+
+def test_correctly_placed_override_still_arms_the_bypass() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        armed = invoke(
+            "prompt",
+            prompt_payload("[allow-usage-guard]\ncontinue", session="armed"),
+            state,
+        )
+        assert armed.returncode == 0
+        assert NEAR_MISS_HINT not in armed.stdout
+
+
+def test_inline_marker_mentions_do_not_trigger_the_near_miss_hint() -> None:
+    """Explanatory mentions are deliberately inert and must stay silent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        denied = invoke(
+            "prompt",
+            prompt_payload(
+                "remind me when to use [allow-usage-guard] next time",
+                session="inline",
+            ),
+            state,
+        )
+        assert denied.returncode == 2
+        assert NEAR_MISS_HINT not in denied.stderr
+
+
+def test_near_miss_on_an_allowed_prompt_surfaces_as_a_notice() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        allowed = invoke(
+            "prompt",
+            prompt_payload("[allow-agent-burst] fan out now", session="notice"),
+            state,
+        )
+        assert allowed.returncode == 0
+        context = json.loads(allowed.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert NEAR_MISS_HINT in context
+        assert "[allow-agent-burst]" in context
+
+
 def main() -> int:
     tests = [
         value for name, value in sorted(globals().items()) if name.startswith("test_")

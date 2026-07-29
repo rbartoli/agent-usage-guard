@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 120 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 124 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -118,6 +118,8 @@ Put a marker alone on the first non-blank line of a prompt to bypass for 10 minu
 
 - `[allow-agent-burst]` — bypasses agent-only limits (deliberate fan-out)
 - `[allow-usage-guard]` — bypasses rate, context, budget, and fuse gates (deliberate heavy turn); lifecycle invariants such as blocking a duplicate in-flight resume remain enforced
+
+A prompt that *opens* with a marker but puts other text on the same line — `[allow-usage-guard] continue` — still arms nothing, because strictness is what keeps a marker quoted in prose from lifting your limits. The guard now says so explicitly, in the denial itself or as a notice, rather than leaving a deliberate bypass to fail silently.
 
 Recovery commands (`/status`, `/model`, `/compact`, `/clear`, `/context`, `/usage`) are always allowed, even under an active block.
 

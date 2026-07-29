@@ -22,6 +22,12 @@
 - Keep compaction boundaries beyond the rolling window and avoid globally
   blocking other models after an Opus-only limit.
 - Require escape markers as standalone first-line directives.
+- Say so when a prompt opens with an escape marker but puts other text on the
+  same line. The matcher stays strict - that is what stops a marker quoted in
+  prose from lifting the limits - but a misplaced marker no longer fails
+  silently: the reason is appended to the denial, or surfaced as a notice when
+  nothing blocked. Found by dogfooding, where every override attempt on record
+  had been silently inert.
 - Deny prompt and `/research` events with a decision document so Claude Code
   prints the guard's reason on its own. A bare exit 2 made it prefix the reason
   with the configured hook command, which on a plugin install is the literal

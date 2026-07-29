@@ -914,6 +914,37 @@ def has_override_directive(prompt: str, marker: str) -> bool:
     return False
 
 
+def near_miss_override(prompt: str) -> str:
+    """Return a marker the first line tried to use but placed wrongly.
+
+    ``has_override_directive`` is deliberately strict: the marker must be the
+    entire first non-blank line, so quoted, negated, and explanatory mentions
+    stay inert. The cost is that ``[allow-usage-guard] continue`` arms nothing
+    and looks identical to never having tried, which is how a broken escape
+    hatch can go unnoticed indefinitely.
+
+    Only a line that *starts* with a marker counts. An inline mention later in
+    the sentence is the case strictness exists to ignore, and warning about it
+    would punish the prose the rule was written to allow.
+    """
+    for line in prompt.splitlines():
+        stripped = line.strip().lower()
+        if not stripped:
+            continue
+        for marker in (AGENT_OVERRIDE_MARKER, USAGE_OVERRIDE_MARKER):
+            if stripped != marker and stripped.startswith(marker):
+                return marker
+        return ""
+    return ""
+
+
+def near_miss_hint(marker: str) -> str:
+    return (
+        f"{marker} did not arm a bypass - it must sit alone on the first "
+        "non-blank line, and this prompt put other text on that line."
+    )
+
+
 def tool_fingerprint(tool_name: str, tool_input: dict[str, Any]) -> str:
     return canonical_hash([tool_name, tool_input])
 
@@ -1497,6 +1528,8 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
     request = latest_request(payload)
     recovery = is_recovery_command(prompt)
     soft_notice = ""
+    near_miss = near_miss_override(prompt)
+    hint = f" Note: {near_miss_hint(near_miss)}" if near_miss else ""
     agent_directive = has_override_directive(prompt, AGENT_OVERRIDE_MARKER)
     usage_directive = has_override_directive(prompt, USAGE_OVERRIDE_MARKER)
 
@@ -1520,7 +1553,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
 
             rate_limit = active_rate_limit(state, now)
             if rate_limit and not recovery and not usage_bypass:
-                return block_prompt(rate_limit_message(rate_limit))
+                return block_prompt(rate_limit_message(rate_limit) + hint)
 
             context = effective_context(state, sid, request)
             hard_context = env_int(
@@ -1534,7 +1567,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     f"roughly {context:,} context tokens. Run /compact or /clear "
                     "before submitting more work. /status, /model, /context and "
                     f"/usage are also allowed. Use {USAGE_OVERRIDE_MARKER} only "
-                    "for a deliberate high-context turn."
+                    "for a deliberate high-context turn." + hint
                 )
 
             if requests_broad_resume(prompt) and not (agent_bypass or usage_bypass):
@@ -1542,7 +1575,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     "BLOCKED by agent-usage-guard's agent-burst guard: this prompt would "
                     "start or resume all saved agents at once. Name at most four "
                     "agents and work in batches. "
-                    f"Use {AGENT_OVERRIDE_MARKER} only for an intentional burst."
+                    f"Use {AGENT_OVERRIDE_MARKER} only for an intentional burst." + hint
                 )
 
             if recovery:
@@ -1589,7 +1622,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "high-context session was resumed in the last "
                         f"{format_duration(window)}. This session would rebuild "
                         f"roughly {context:,} context tokens. Wait, run /compact, "
-                        f"or deliberately bypass with {USAGE_OVERRIDE_MARKER}."
+                        f"or deliberately bypass with {USAGE_OVERRIDE_MARKER}." + hint
                     )
                 if existing is None:
                     state["dormant_resumes"].append(
@@ -1625,10 +1658,12 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
         ):
             return block_prompt(
                 "BLOCKED by agent-usage-guard's agent-burst guard: resume named agents in "
-                "small batches instead of resuming all agents."
+                "small batches instead of resuming all agents." + hint
             )
         return 0
 
+    if near_miss and not soft_notice:
+        soft_notice = f"USAGE GUARD: {near_miss_hint(near_miss)}"
     if soft_notice:
         return add_context("UserPromptSubmit", soft_notice)
     return 0
