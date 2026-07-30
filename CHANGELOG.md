@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Stop treating one model's exhaustion as an account-wide stop. Running out of
+  usage credits for a single model armed the spend circuit breaker globally,
+  and switching model did not clear it: the session stayed blocked for the full
+  cooldown while the denial itself listed `/model` as an allowed recovery
+  command that could not actually recover anything. The rule already existed
+  for Opus plan limits but was matched on the word "opus" and applied only to
+  `rate_limit`, so credit exhaustion - a billing failure naming any other model
+  - fell straight through. The signal is now the remedy Claude Code prints,
+  which offers a model switch only when another model still works, and it is
+  read for both error types. A limit that offers no switch is still account-
+  wide and still arms the circuit. Found by dogfooding.
+
 - Infer a silent refusal for escalations that reserve nothing. The inference
   read only agent reservations, which just one kind of escalation writes, so a
   refused Workflow or a refused context/tool-error trip on an ordinary tool

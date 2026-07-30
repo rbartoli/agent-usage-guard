@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 138 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 140 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -80,7 +80,7 @@ Six independent protections, all thresholds env-tunable:
 
 | # | Protection | Default | Verdict on breach |
 |---|---|---|---|
-| 1 | **Rate-limit circuit breaker** — after Claude reports an account/session/spend limit, blocks prompts and gates agent spawns until the parsed reset time; model-only Opus exhaustion remains switchable | 5 min–1 h fallback | block prompt · ask tool |
+| 1 | **Rate-limit circuit breaker** — after Claude reports an account/session/spend limit, blocks prompts and gates agent spawns until the parsed reset time; a limit that offers a model switch (plan or credit exhaustion on one model) is left switchable | 5 min–1 h fallback | block prompt · ask tool |
 | 2 | **Agent budgets** — provisional permission-safe reservations; max concurrent subagents; max confirmed starts per rolling window (completion does **not** reset it); subagent context ceiling; dormant heavy-session resume cap | 4 active/reserved · 12 / 10 min · 1 dormant resume | ask · block dormant resume |
 | 3 | **Context gates** — warn at high session context, hard-stop at extreme context; rolling-window tool budget once context is heavy | warn 300k · block 500k · 20 tools / 10 min @ 400k | warn → block · ask tool |
 | 4 | **Opaque Workflow gate** — gates Workflow before execution, including bundled `/deep-research`; an explicitly bypassed Workflow is observed through child lifecycle events | gated by default | ask tool · block expansion |
