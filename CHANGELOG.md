@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- State where an escape marker has to go, everywhere one is named. Twelve of
+  the thirteen denials that advertised a bypass named the marker and stopped
+  there, which points the reader straight at the one placement that arms
+  nothing: the marker typed ahead of the retry, on the same line. Only a
+  *leading* misplacement is warned about - a marker later in the prompt is
+  indistinguishable from the prose mention strictness exists to ignore - so the
+  denial that offers the escape hatch is the only reliable place to say the
+  rule. A test now drives every such denial and fails if one names a marker
+  without it. Found by dogfooding, where three consecutive bypass attempts
+  armed nothing and only one of them explained why.
+
 - Escalate `PreToolUse` guard trips to the user instead of denying them
   outright. A tripped agent budget, context gate, tool-error fuse, or Workflow
   now returns `permissionDecision: "ask"`, which raises Claude Code's own
@@ -71,10 +82,10 @@
   later rungs.
 - Say so when a prompt opens with an escape marker but puts other text on the
   same line. The matcher stays strict - that is what stops a marker quoted in
-  prose from lifting the limits - but a misplaced marker no longer fails
-  silently: the reason is appended to the denial, or surfaced as a notice when
-  nothing blocked. Found by dogfooding, where every override attempt on record
-  had been silently inert.
+  prose from lifting the limits - but a marker that *leads* the line no longer
+  fails silently: the reason is appended to the denial, or surfaced as a notice
+  when nothing blocked. Found by dogfooding, where every override attempt on
+  record had been silently inert.
 - Deny prompt and `/research` events with a decision document so Claude Code
   prints the guard's reason on its own. A bare exit 2 made it prefix the reason
   with the configured hook command, which on a plugin install is the literal
