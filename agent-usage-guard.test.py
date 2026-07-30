@@ -4900,6 +4900,51 @@ def test_correctly_placed_override_still_arms_the_bypass() -> None:
         assert NEAR_MISS_HINT not in armed.stdout
 
 
+def test_a_longer_token_starting_with_a_marker_is_not_a_near_miss() -> None:
+    """``[allow-usage-guard]rails`` is a different token, not a misplacement.
+
+    The near-miss test was a bare ``startswith``, so any line whose opening
+    token merely began with a marker was told its bypass had failed to arm -
+    advice that makes no sense for a word the user never meant as the marker.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        for prompt in (
+            f"{USAGE_OVERRIDE_MARKER}rails is the name of the wrapper",
+            f"{AGENT_OVERRIDE_MARKER}s are what I want to discuss",
+        ):
+            denied = invoke(
+                "prompt", prompt_payload(prompt, session="longer-token"), state
+            )
+            assert denied.returncode == 2
+            assert NEAR_MISS_HINT not in denied.stderr, prompt
+
+
+def test_a_marker_followed_by_punctuation_is_still_a_near_miss() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("API Error: Rate limit reached"),
+            state,
+        )
+        for prompt in (
+            f"{USAGE_OVERRIDE_MARKER}, continue",
+            f"{USAGE_OVERRIDE_MARKER}: continue",
+            f"{USAGE_OVERRIDE_MARKER} continue",
+        ):
+            denied = invoke(
+                "prompt", prompt_payload(prompt, session="punctuated"), state
+            )
+            assert denied.returncode == 2
+            assert NEAR_MISS_HINT in denied.stderr, prompt
+
+
 def test_inline_marker_mentions_do_not_trigger_the_near_miss_hint() -> None:
     """Explanatory mentions are deliberately inert and must stay silent."""
     with tempfile.TemporaryDirectory() as tmp:
