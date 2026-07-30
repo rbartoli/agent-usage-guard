@@ -938,6 +938,21 @@ def near_miss_override(prompt: str) -> str:
     return ""
 
 
+PLACEMENT_RULE = "alone on the first non-blank line of a prompt"
+
+
+def marker_directive(marker: str) -> str:
+    """Name a marker together with the rule that makes it arm anything.
+
+    ``has_override_directive`` accepts exactly one placement, so a denial that
+    advertises a marker without that rule points at the form users reach for
+    first - the marker typed ahead of the retry, on the same line - which arms
+    nothing. Every message that names a marker states the rule, either through
+    here or by ending on ``PLACEMENT_RULE`` where that reads better.
+    """
+    return f"{marker} {PLACEMENT_RULE}"
+
+
 def near_miss_hint(marker: str) -> str:
     return (
         f"{marker} did not arm a bypass - it must sit alone on the first "
@@ -1494,8 +1509,8 @@ def fuse_trip_message(attempt: int, now: float, until: float, window: int) -> st
         f"tripped the session-wide agent fuse at {format_clock(now)}. "
         "Agent starts and resumes in this session are denied until "
         f"{format_until(until)}. End the turn with a checkpoint; do not retry "
-        f"agent calls. {USAGE_OVERRIDE_MARKER} lifts the fuse only for a "
-        "deliberate bypass."
+        f"agent calls. {marker_directive(USAGE_OVERRIDE_MARKER)} lifts the "
+        "fuse only for a deliberate bypass."
     )
 
 
@@ -1504,8 +1519,9 @@ def fuse_active_message(attempt: int, now: float, until: float) -> str:
         "BLOCKED by agent-usage-guard's agent fuse (denial "
         f"{attempt} at {format_clock(now)}): agent starts and resumes in this "
         f"session stay denied until {format_until(until)}. End the turn with "
-        f"a checkpoint instead of retrying. {USAGE_OVERRIDE_MARKER} lifts the "
-        "fuse only for a deliberate bypass."
+        f"a checkpoint instead of retrying. "
+        f"{marker_directive(USAGE_OVERRIDE_MARKER)} lifts the fuse only for a "
+        "deliberate bypass."
     )
 
 
@@ -1517,7 +1533,8 @@ def rate_limit_message(rate_limit: dict[str, Any]) -> str:
         f"{category} limit is active until {format_until(until)}. "
         "Do not retry agents or prompts before reset. Recovery commands "
         "(/status, /model, /compact, /clear, /context, /usage) remain allowed. "
-        f"Use {USAGE_OVERRIDE_MARKER} only for a deliberate bypass."
+        f"Use {USAGE_OVERRIDE_MARKER} only for a deliberate bypass, "
+        f"{PLACEMENT_RULE}."
     )
 
 
@@ -1635,7 +1652,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     f"roughly {context:,} context tokens. Run /compact or /clear "
                     "before submitting more work. /status, /model, /context and "
                     f"/usage are also allowed. Use {USAGE_OVERRIDE_MARKER} only "
-                    "for a deliberate high-context turn." + hint
+                    f"for a deliberate high-context turn, {PLACEMENT_RULE}." + hint
                 )
 
             if requests_broad_resume(prompt) and not (agent_bypass or usage_bypass):
@@ -1643,7 +1660,8 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     "BLOCKED by agent-usage-guard's agent-burst guard: this prompt would "
                     "start or resume all saved agents at once. Name at most four "
                     "agents and work in batches. "
-                    f"Use {AGENT_OVERRIDE_MARKER} only for an intentional burst." + hint
+                    f"Use {AGENT_OVERRIDE_MARKER} only for an intentional "
+                    f"burst, {PLACEMENT_RULE}." + hint
                 )
 
             if recovery:
@@ -1690,7 +1708,8 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "high-context session was resumed in the last "
                         f"{format_duration(window)}. This session would rebuild "
                         f"roughly {context:,} context tokens. Wait, run /compact, "
-                        f"or deliberately bypass with {USAGE_OVERRIDE_MARKER}." + hint
+                        "or deliberately bypass with "
+                        f"{marker_directive(USAGE_OVERRIDE_MARKER)}." + hint
                     )
                 if existing is None:
                     state["dormant_resumes"].append(
@@ -1774,8 +1793,9 @@ def prompt_expansion_guard(
                     "BLOCKED by agent-usage-guard's Workflow guard: "
                     "/deep-research runs as an opaque Workflow that can launch "
                     "agents before lifecycle hooks can enforce a budget. Use "
-                    "bounded Agent calls instead, or place an override marker "
-                    "alone on the first non-blank prompt line for a deliberate run."
+                    "bounded Agent calls instead, or place "
+                    f"{marker_directive(AGENT_OVERRIDE_MARKER)} for a "
+                    "deliberate run."
                 )
 
             context = effective_context(state, sid, request)
@@ -1788,14 +1808,15 @@ def prompt_expansion_guard(
                 return block_prompt(
                     "BLOCKED by agent-usage-guard's research guard: /research would begin at "
                     f"roughly {context:,} context tokens. Run /compact first, "
-                    f"or deliberately bypass with {USAGE_OVERRIDE_MARKER}."
+                    "or deliberately bypass with "
+                    f"{marker_directive(USAGE_OVERRIDE_MARKER)}."
                 )
             if max_effort and not usage_bypass:
                 return block_prompt(
                     "BLOCKED by agent-usage-guard's research guard: maximum effort combined "
                     "with parallel research caused the largest historical agent "
                     "swarm. Lower the effort level before /research, or use "
-                    f"{USAGE_OVERRIDE_MARKER} deliberately."
+                    f"{marker_directive(USAGE_OVERRIDE_MARKER)} deliberately."
                 )
 
             rolling_max = env_int(
@@ -2051,7 +2072,8 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "BLOCKED by agent-usage-guard's nested-agent guard: a subagent may "
                         "not spawn or resume another agent. Return findings to "
                         "the parent, which can schedule the next leaf agent. "
-                        f"Use {AGENT_OVERRIDE_MARKER} only for intentional nesting."
+                        f"Use {AGENT_OVERRIDE_MARKER} only for intentional "
+                        f"nesting, {PLACEMENT_RULE}."
                     )
                 elif is_workflow and not (agent_bypass or usage_bypass):
                     block_reason = (
@@ -2059,8 +2081,8 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "can launch up to 16 agents concurrently and 1,000 in one "
                         "run, while lifecycle hooks observe starts only after they "
                         "happen. Use bounded Agent calls instead, or place "
-                        f"{AGENT_OVERRIDE_MARKER} alone on the first non-blank "
-                        "prompt line for a deliberate Workflow."
+                        f"{marker_directive(AGENT_OVERRIDE_MARKER)} for a "
+                        "deliberate Workflow."
                     )
 
                 existing_entry = next(

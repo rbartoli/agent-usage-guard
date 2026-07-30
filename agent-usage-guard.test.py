@@ -4668,7 +4668,8 @@ def test_allowed_prompts_never_emit_a_block_decision() -> None:
         assert '"decision"' not in allowed.stdout
 
 
-NEAR_MISS_HINT = "alone on the first non-blank line"
+PLACEMENT_RULE = "alone on the first non-blank line"
+NEAR_MISS_HINT = "did not arm a bypass"
 
 
 def test_near_miss_override_marker_is_reported_not_silently_dropped() -> None:
@@ -4746,6 +4747,117 @@ def test_near_miss_on_an_allowed_prompt_surfaces_as_a_notice() -> None:
         context = json.loads(allowed.stdout)["hookSpecificOutput"]["additionalContext"]
         assert NEAR_MISS_HINT in context
         assert "[allow-agent-burst]" in context
+
+
+def assert_states_placement(label: str, message: str) -> None:
+    """A denial that names a marker must also say where the marker goes.
+
+    Naming ``[allow-usage-guard]`` without the placement rule sends the reader
+    to the one form that arms nothing: typing it ahead of the retry, on the
+    same line. That fails silently for every placement except a leading one, so
+    the denial that advertises the escape hatch is the only reliable place to
+    state the rule.
+    """
+    named = [
+        marker
+        for marker in ("[allow-usage-guard]", "[allow-agent-burst]")
+        if marker in message
+    ]
+    assert named, f"{label} names no override marker: {message}"
+    assert PLACEMENT_RULE in message, f"{label} omits the placement rule: {message}"
+
+
+def test_every_denial_that_names_a_marker_states_where_it_goes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+
+        dormant_state = root / "dormant.json"
+        first, second = root / "first.jsonl", root / "second.jsonl"
+        write_transcript(first, NOW - 7200, 200_000)
+        write_transcript(second, NOW - 7200, 220_000)
+        invoke(
+            "prompt", prompt_payload("continue", "dormant-one", first), dormant_state
+        )
+        dormant = invoke(
+            "prompt",
+            prompt_payload("continue", "dormant-two", second),
+            dormant_state,
+        )
+        assert dormant.returncode == 2
+        assert_states_placement("dormant-session guard", dormant.stderr)
+
+        rate_state = root / "rate.json"
+        invoke(
+            "stop-failure",
+            stop_failure_payload("You've hit your session limit · resets in 5 minutes"),
+            rate_state,
+        )
+        rate_limited = invoke("prompt", prompt_payload("continue"), rate_state)
+        assert rate_limited.returncode == 2
+        assert_states_placement("usage circuit breaker", rate_limited.stderr)
+
+        hard_state = root / "hard.json"
+        huge = root / "huge.jsonl"
+        write_transcript(huge, NOW - 1, 500_000)
+        hard_context = invoke(
+            "prompt",
+            prompt_payload("continue", "hard-context", huge),
+            hard_state,
+        )
+        assert hard_context.returncode == 2
+        assert_states_placement("context guard", hard_context.stderr)
+
+        burst_state = root / "burst.json"
+        burst = invoke("prompt", prompt_payload("resume all agents"), burst_state)
+        assert burst.returncode == 2
+        assert_states_placement("agent-burst guard", burst.stderr)
+
+        nested_state = root / "nested.json"
+        nested_dir = root / "session" / "subagents"
+        nested_dir.mkdir(parents=True)
+        child = nested_dir / "agent-child.jsonl"
+        write_transcript(child, NOW - 1, 20_000)
+        nested = invoke(
+            "pre-tool",
+            agent_payload("nested", session="parent-a", transcript=child),
+            nested_state,
+        )
+        assert_states_placement("nested-agent guard", ask_reason(nested))
+
+        workflow_state = root / "workflow.json"
+        workflow = invoke(
+            "pre-tool",
+            tool_payload("wf", "Workflow", {"name": "audit"}, session="wf"),
+            workflow_state,
+        )
+        assert_states_placement("Workflow guard", ask_reason(workflow))
+
+        fuse_state = root / "fuse.json"
+        fill_active_slots(fuse_state)
+        for index in range(1, 5):
+            assert ask_reason(blocked_agent_attempt(fuse_state, index))
+        tripped = blocked_agent_attempt(fuse_state, 5)
+        assert_states_placement("agent fuse trip", deny_reason(tripped))
+        burning = blocked_agent_attempt(fuse_state, 6, description="Unrelated")
+        assert_states_placement("burning agent fuse", deny_reason(burning))
+
+        research_state = root / "research.json"
+        research_context = root / "research.jsonl"
+        write_transcript(research_context, NOW - 1, 300_000)
+        research = invoke(
+            "prompt-expansion",
+            research_payload(research_context),
+            research_state,
+        )
+        assert research.returncode == 2
+        assert_states_placement("research context guard", research.stderr)
+
+        effort_state = root / "effort.json"
+        effort = research_payload()
+        effort["effort"] = {"level": "xhigh"}
+        max_effort = invoke("prompt-expansion", effort, effort_state)
+        assert max_effort.returncode == 2
+        assert_states_placement("research effort guard", max_effort.stderr)
 
 
 def main() -> int:
