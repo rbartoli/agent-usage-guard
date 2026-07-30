@@ -3671,6 +3671,58 @@ def test_opus_only_limit_does_not_arm_global_circuit() -> None:
         assert load_state(state)["rate_limit"] is None
 
 
+CREDIT_EXHAUSTION = (
+    "You're out of usage credits. Run /usage-credits to keep using Fable 5 "
+    "or /model to switch models."
+)
+
+
+def test_credit_exhaustion_naming_one_model_does_not_arm_a_global_circuit() -> None:
+    """Observed live: running out of credits for one model blocked every model.
+
+    Claude Code offers /model as the remedy in this message, so another model
+    still works. Arming an account-wide circuit contradicted the error the
+    guard was reading, and switching model did not clear it - the session
+    stayed blocked for the whole cooldown with no way forward but an override.
+    """
+    for error in ("billing_error", "rate_limit"):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            assert (
+                invoke(
+                    "stop-failure",
+                    stop_failure_payload(CREDIT_EXHAUSTION, error=error),
+                    state,
+                ).returncode
+                == 0
+            )
+            assert (
+                invoke(
+                    "prompt",
+                    prompt_payload("continue on another model"),
+                    state,
+                ).returncode
+                == 0
+            ), error
+            assert load_state(state)["rate_limit"] is None, error
+
+
+def test_account_wide_exhaustion_still_arms_the_circuit() -> None:
+    """No model switch is offered, so the limit really is account-wide."""
+    for message, error in (
+        ("You've hit your session limit · resets in 5 minutes", "rate_limit"),
+        ("API Error: monthly spend limit reached", "billing_error"),
+        ("You're out of usage credits.", "billing_error"),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            invoke("stop-failure", stop_failure_payload(message, error=error), state)
+            assert load_state(state)["rate_limit"] is not None, message
+            assert (
+                invoke("prompt", prompt_payload("keep working"), state).returncode == 2
+            ), message
+
+
 def test_unrelated_opus_prose_does_not_hide_a_global_rate_limit() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"

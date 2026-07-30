@@ -175,6 +175,13 @@ RESET_WEEKDAY_24H_PATTERN = re.compile(
     r"(?:\s*\(([^)]+)\))?",
     re.IGNORECASE,
 )
+# Claude Code offers a model switch only when another model still works, so a
+# limit that names it is scoped to one model rather than to the account.
+MODEL_SWITCH_REMEDY_PATTERN = re.compile(
+    r"(?:/model\b[^.\n]{0,40}\bswitch\b|"
+    r"\bswitch(?:ing)?\s+(?:to\s+)?(?:another\s+|a\s+different\s+)?models?\b)",
+    re.IGNORECASE,
+)
 WEEKDAY_INDEX = {
     "mon": 0,
     "tue": 1,
@@ -2655,8 +2662,18 @@ def stop_failure(payload: dict[str, Any], now: float, window: int) -> int:
         )
     )
     lower = text.lower()
-    # Opus-only exhaustion is not an account-wide stop: Claude explicitly
+    # Exhausting one model is not an account-wide stop: Claude explicitly
     # allows continuing on another model. Do not turn it into a global circuit.
+    #
+    # The remedy Claude Code prints is the reliable signal, because it names a
+    # model switch only when another model still works. Reading the model name
+    # instead would not help: the guard runs before the next request, so the
+    # transcript still ends on the exhausted model and a switched session would
+    # stay blocked - which is how running out of credits for one model blocked
+    # every model, with the denial itself pointing at the /model that could not
+    # clear it. The remedy is checked for both error types, since credit
+    # exhaustion arrives as a billing failure while a plan limit arrives as a
+    # rate limit, and neither is account-wide when a switch is on offer.
     scoped_limit_text = (
         error_message or str(payload.get("last_assistant_message") or "")
     ).lower()
@@ -2665,7 +2682,9 @@ def stop_failure(payload: dict[str, Any], now: float, window: int) -> int:
         r"\blimit\b[^.\n]{0,24}\bopus\b)",
         scoped_limit_text,
     )
-    if error == "rate_limit" and opus_scoped:
+    if MODEL_SWITCH_REMEDY_PATTERN.search(scoped_limit_text) or (
+        error == "rate_limit" and opus_scoped
+    ):
         return 0
     parsed_until = parse_reset_until(text, now)
     if error == "billing_error":
