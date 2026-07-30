@@ -2733,6 +2733,90 @@ def test_non_agent_blocks_escalate_but_never_trip_agent_fuse() -> None:
         assert invoke("pre-tool", agent_payload("still-fine"), state).returncode == 0
 
 
+def test_silently_refused_workflow_advances_the_ladder() -> None:
+    """A Workflow dialog answered with Esc has to advance the ladder too.
+
+    The agent path infers a refusal from an escalated reservation that is still
+    unresolved when the identical call returns. Workflow is agent risk but not
+    a direct agent action, so it reserved nothing, and the inference had
+    nothing to read: every retry reported "denial 1" forever while the guard
+    accumulated one unused tool event per attempt.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        workflow_input = {"script": "export const meta = {}", "name": "audit"}
+        reasons = []
+        for index in range(1, 4):
+            # No decline(): a refused dialog emits no PermissionDenied at all.
+            attempt = tool_payload(
+                f"wf-{index}", "Workflow", workflow_input, session="wf"
+            )
+            reasons.append(ask_reason(invoke("pre-tool", attempt, state)))
+        assert "denial 1" not in reasons[1], reasons[1]
+        assert "denial 2" in reasons[1], reasons[1]
+        assert "denial 3" in reasons[2], reasons[2]
+        persisted = load_state(state)
+        # The refused attempts never ran, so they must not linger as tool events.
+        assert [item["id"] for item in persisted["tool_events"]] == ["wf-3"], persisted[
+            "tool_events"
+        ]
+        assert len(persisted["block_events"]) == 2, persisted["block_events"]
+
+
+def test_silently_refused_non_agent_tool_advances_the_ladder() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        heavy = root / "heavy.jsonl"
+        write_transcript(heavy, NOW - 60, 500_000)
+        env = {"AGENT_GUARD_TOOL_MAX": "1"}
+        read_input = {"file_path": "/repo/notes.md"}
+        reasons = []
+        for index in range(1, 4):
+            attempt = tool_payload(
+                f"read-{index}",
+                "Read",
+                read_input,
+                session="heavy",
+                transcript=heavy,
+            )
+            proc = invoke("pre-tool", attempt, state, extra_env=env)
+            if outcome(proc) != "allow":
+                reasons.append(refusal_reason(proc))
+        assert len(reasons) == 2, reasons
+        assert "denial 1" in reasons[0], reasons[0]
+        assert "denial 2" in reasons[1], reasons[1]
+
+
+def test_approved_workflow_is_not_read_back_as_a_refusal() -> None:
+    """Only an identical repeat infers a refusal, and only within the window.
+
+    An escalated call that the user approved leaves the same unresolved marker
+    behind, so the inference is bounded by the rolling window: a repeat that
+    late is a fresh decision, not the retry the ladder is counting.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        workflow_input = {"script": "export const meta = {}", "name": "audit"}
+        first = ask_reason(
+            invoke(
+                "pre-tool",
+                tool_payload("wf-early", "Workflow", workflow_input, session="wf"),
+                state,
+            )
+        )
+        assert "denial 1" in first
+        later = ask_reason(
+            invoke(
+                "pre-tool",
+                tool_payload("wf-late", "Workflow", workflow_input, session="wf"),
+                state,
+                now=NOW + 3600,
+            )
+        )
+        assert "denial 1" in later, later
+
+
 def test_malformed_input_and_disabled_guard_fail_open() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
