@@ -31,7 +31,7 @@ python3 mutation-smoke.py
 
 CI also compiles every shipped Python file, runs Ruff lint and format checks,
 validates every JSON manifest, validates the Claude plugin contract, runs all
-133 tests on Python 3.9–3.14, and rejects branch-aware runtime coverage below
+135 tests on Python 3.9–3.14, and rejects branch-aware runtime coverage below
 90%. The Python 3.14 job also requires all six targeted mutants to be killed.
 Coverage is a backstop, not the test-design target: platform-impossible
 fallbacks and defensive malformed-data branches are less important than a

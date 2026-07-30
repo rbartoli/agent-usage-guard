@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Accumulate prompt notices instead of letting the last one win. The
+  confirmation that a bypass armed shared one slot with the high-context
+  warning, so arming `[allow-agent-burst]` in a heavy session produced only the
+  warning. The override still armed in state, which is the worst version of the
+  failure: nothing distinguished a live bypass from a marker that did nothing.
+  The near-miss hint lost the same race. Both now surface alongside the
+  warning, under a single `USAGE GUARD:` prefix.
+
 - State where an escape marker has to go, everywhere one is named. Twelve of
   the thirteen denials that advertised a bypass named the marker and stopped
   there, which points the reader straight at the one placement that arms
