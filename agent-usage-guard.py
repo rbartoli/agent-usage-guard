@@ -939,8 +939,15 @@ def near_miss_override(prompt: str) -> str:
         if not stripped:
             continue
         for marker in (AGENT_OVERRIDE_MARKER, USAGE_OVERRIDE_MARKER):
-            if stripped != marker and stripped.startswith(marker):
-                return marker
+            if stripped == marker or not stripped.startswith(marker):
+                continue
+            # A word character straight after the marker means the line opened
+            # on a longer token that merely shares the prefix. Telling its
+            # author that their bypass failed to arm is advice about a marker
+            # they never used.
+            if stripped[len(marker)].isalnum() or stripped[len(marker)] in "-_":
+                continue
+            return marker
         return ""
     return ""
 
