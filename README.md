@@ -81,8 +81,8 @@ Six independent protections, all thresholds env-tunable:
 | # | Protection | Default | Verdict on breach |
 |---|---|---|---|
 | 1 | **Rate-limit circuit breaker** — after Claude reports an account/session/spend limit, blocks prompts and gates agent spawns until the parsed reset time; a limit that offers a model switch (plan or credit exhaustion on one model) is left switchable | 5 min–1 h fallback | block prompt · ask tool |
-| 2 | **Agent budgets** — provisional permission-safe reservations; max concurrent subagents; max confirmed starts per rolling window (completion does **not** reset it); subagent context ceiling; dormant heavy-session resume cap | 4 active/reserved · 12 / 10 min · 1 dormant resume | ask · block dormant resume |
-| 3 | **Context gates** — warn at high session context, hard-stop at extreme context; rolling-window tool budget once context is heavy | warn 300k · block 500k · 20 tools / 10 min @ 400k | warn → block · ask tool |
+| 2 | **Agent budgets** — provisional permission-safe reservations; max concurrent subagents; max confirmed starts per rolling window (completion does **not** reset it); subagent context ceiling | 4 active/reserved · 12 / 10 min | ask |
+| 3 | **Context gates** — warn at high session context, hard-stop at extreme context; rolling-window tool budget once context is heavy; dormant heavy-session resume cap | warn 300k · block 500k · 20 tools / 10 min @ 400k · 1 dormant resume | warn → block · ask tool |
 | 4 | **Opaque Workflow gate** — gates Workflow before execution, including bundled `/deep-research`; an explicitly bypassed Workflow is observed through child lifecycle events | gated by default | ask tool · block expansion |
 | 5 | **Tool-error fuse** — after N identical tool failures, gates the identical retry | 3 failures | ask |
 | 6 | **Escalating denial ladder + agent fuse** — repeat `PreToolUse` refusals of the same call are never byte-identical and escalate (changed condition info → end-the-turn instruction); repeated agent-call refusals trip a session-wide agent fuse, which denies without asking | fuse at 5 refusals / 10 min | escalate → deny |
@@ -128,6 +128,8 @@ Put a marker alone on the first non-blank line of a prompt to bypass for 10 minu
 
 - `[allow-agent-burst]` — bypasses agent-only limits (deliberate fan-out)
 - `[allow-usage-guard]` — bypasses rate, context, budget, and fuse gates (deliberate heavy turn); lifecycle invariants such as blocking a duplicate in-flight resume remain enforced
+
+Every context gate — including the dormant heavy-session resume cap, which is about the context a resumed session rebuilds rather than about agents — takes `[allow-usage-guard]`. `[allow-agent-burst]` does not lift it.
 
 A prompt that *opens* with a marker but puts other text on the same line — `[allow-usage-guard] continue` — still arms nothing, because strictness is what keeps a marker quoted in prose from lifting your limits. The guard says so explicitly there, in the denial itself or as a notice. A marker placed later in the prompt stays deliberately silent, since that is indistinguishable from the prose mention the rule exists to ignore — so every denial that names a marker also states where the marker has to go.
 
