@@ -48,6 +48,12 @@ MUTATIONS = (
         "return marker in stripped",
         "test_escape_marker_mentions_do_not_activate_an_override",
     ),
+    (
+        "ignore the usage override in the dormant guard",
+        'and now - request["at"] >= dormant_seconds\n                and not usage_bypass',
+        'and now - request["at"] >= dormant_seconds',
+        "test_usage_override_bypasses_the_dormant_guard_and_agent_burst_does_not",
+    ),
 )
 
 

@@ -31,8 +31,8 @@ python3 mutation-smoke.py
 
 CI also compiles every shipped Python file, runs Ruff lint and format checks,
 validates every JSON manifest, validates the Claude plugin contract, runs all
-140 tests on Python 3.9–3.14, and rejects branch-aware runtime coverage below
-90%. The Python 3.14 job also requires all six targeted mutants to be killed.
+141 tests on Python 3.9–3.14, and rejects branch-aware runtime coverage below
+90%. The Python 3.14 job also requires all seven targeted mutants to be killed.
 Coverage is a backstop, not the test-design target: platform-impossible
 fallbacks and defensive malformed-data branches are less important than a
 scenario that proves a user-visible invariant.
@@ -43,7 +43,7 @@ scenario that proves a user-visible invariant.
 |---|---|
 | Rate/spend/session circuit breaker | Official and legacy `StopFailure` fields; relative, 12-hour, 24-hour, weekday, compound, timezone, invalid-clock fallback, model-scoped Opus limits, category-specific cooldowns, non-shortening cooldowns, expiry, recovery commands, and deliberate override |
 | Agent concurrency and rolling budgets | New starts and stopped-agent resumes, permission-safe pending reservations, `PostToolUse` confirmation, `PermissionDenied` and transcript-denial rollback, active leases, completed-history budgets, custom TTLs, nested-agent denial, agent-context ceiling, dormant heavy sessions, aliases, duplicate hooks, out-of-order lifecycle events, and atomic parallel calls |
-| Context and tool budgets | Latest real request extraction, `Stop` observation, warning and hard gates, high-context rolling tool counts, compaction boundaries, parent/subagent isolation, recovery commands, and deliberate override |
+| Context and tool budgets | Latest real request extraction, `Stop` observation, warning and hard gates, high-context rolling tool counts, compaction boundaries, parent/subagent isolation, recovery commands, and deliberate override — including the dormant-resume cap, which takes the usage marker and not the agent one |
 | Workflow and research gates | Every current Workflow input shape, default-deny `/deep-research`, explicit bypass, high context, max effort in all known payload/transcript shapes, near-exhausted rolling budget, duplicate-notice suppression, and active usage circuit breaker |
 | Repeated-failure fuse | Identical versus changed inputs, duplicate tool IDs, interruption semantics, agent-slot rollback, session isolation, warning threshold, retry blocking, and window expiry |
 | Denial escalation and agent fuse | Per-fingerprint attempt counting, byte-distinct messages, exact configured durations, non-agent behavior, session scoping, override, and cooldown expiry |
