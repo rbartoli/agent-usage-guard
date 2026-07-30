@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 GUARD = Path(__file__).with_name("agent-usage-guard.py")
 ROOT = GUARD.parent
 NOW = 2_000_000_000
+AGENT_OVERRIDE_MARKER = "[allow-agent-burst]"
+USAGE_OVERRIDE_MARKER = "[allow-usage-guard]"
 
 
 def invoke(
@@ -503,6 +505,54 @@ def test_dormant_high_context_sessions_are_serialized() -> None:
         )
         assert blocked.returncode == 2
         assert "220,000 context tokens" in blocked.stderr
+
+
+def test_usage_override_bypasses_the_dormant_guard_and_agent_burst_does_not() -> None:
+    """The dormant guard is a context gate, so only the usage marker lifts it.
+
+    The rate-limit and fuse overrides were pinned; this one was not, and it is
+    the block a returning session actually hits - the marker is the only way
+    past a gate whose whole purpose is to stop the context rebuild, since the
+    prompt that would ask permission is itself the rebuild.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        first, second, third = (root / f"{name}.jsonl" for name in ("a", "b", "c"))
+        write_transcript(first, NOW - 7200, 200_000)
+        write_transcript(second, NOW - 7200, 220_000)
+        write_transcript(third, NOW - 7200, 240_000)
+
+        agent_marker = root / "agent-marker.json"
+        assert (
+            invoke(
+                "prompt", prompt_payload("continue", "holder", first), agent_marker
+            ).returncode
+            == 0
+        )
+        refused = invoke(
+            "prompt",
+            prompt_payload(
+                f"{AGENT_OVERRIDE_MARKER}\ncontinue", "burst-attempt", second
+            ),
+            agent_marker,
+        )
+        assert refused.returncode == 2, refused.stdout
+        assert "dormant-session guard" in refused.stderr
+
+        usage_marker = root / "usage-marker.json"
+        assert (
+            invoke(
+                "prompt", prompt_payload("continue", "holder", first), usage_marker
+            ).returncode
+            == 0
+        )
+        allowed = invoke(
+            "prompt",
+            prompt_payload(f"{USAGE_OVERRIDE_MARKER}\ncontinue", "bypass", third),
+            usage_marker,
+        )
+        assert allowed.returncode == 0, allowed.stderr
+        assert "full usage bypass is active" in allowed.stdout
 
 
 def test_fresh_or_small_session_is_not_reserved() -> None:
