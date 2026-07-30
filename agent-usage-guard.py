@@ -1975,14 +1975,32 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             # back was refused: an approved one would have been confirmed into a
             # lease by SubagentStart or PostToolUse, and the model cannot
             # re-propose the call while its own dialog is still open.
-            for stale_id in [
+            #
+            # Only a direct agent action reserves, so reading reservations alone
+            # left every other escalation - Workflow, and any tool tripping the
+            # context or tool-error gates - with no refusal signal at all: the
+            # ladder reported "denial 1" forever and each retry left another
+            # unused tool event behind. Those escalations are marked on the tool
+            # event instead. Nothing confirms that one ran, so the inference is
+            # bounded by the rolling window: an identical call inside it is the
+            # retry the ladder counts, while a later repeat is a fresh decision.
+            stale_ids = {
                 str(item.get("tool_use_id") or "")
                 for item in state["agent_pending"]
                 if item.get("escalated")
                 and item.get("session_id") == sid
                 and item.get("fingerprint") == fingerprint
                 and item.get("tool_use_id") != tool_id
-            ]:
+            } | {
+                str(item.get("id") or "")
+                for item in state["tool_events"]
+                if item.get("escalated")
+                and item.get("session_id") == sid
+                and item.get("fingerprint") == fingerprint
+                and item.get("id") != tool_id
+                and timed_in_window(item, now, window)
+            }
+            for stale_id in sorted(stale_ids):
                 release_pending_attempt(
                     state,
                     sid,
@@ -2293,6 +2311,16 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         "at": now,
                         "retention_until": now + MAX_WINDOW_SECONDS,
                         "session_id": sid,
+                        # Carries the escalation for calls that reserve nothing,
+                        # so an unresolved one can be read back as a refusal.
+                        # A direct agent action is excluded deliberately: its
+                        # reservation already carries the marker and is cleared
+                        # when the agent starts, so approval is observable
+                        # there. A tool event has no such lifecycle, and
+                        # marking one would charge a denial to an agent the
+                        # user allowed.
+                        "fingerprint": fingerprint,
+                        "escalated": bool(block_reason) and not is_direct_agent_action,
                     }
                 )
     except OSError:

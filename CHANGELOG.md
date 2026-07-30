@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Infer a silent refusal for escalations that reserve nothing. The inference
+  read only agent reservations, which just one kind of escalation writes, so a
+  refused Workflow or a refused context/tool-error trip on an ordinary tool
+  produced no refusal signal at all: the ladder reported "denial 1" on every
+  retry, the agent fuse behind it could never trip, and each attempt left
+  another unused tool event counting against the high-context tool budget.
+  Those escalations are now marked on the tool event, and an unresolved marker
+  is read back the same way a reservation is. A direct agent action is excluded
+  deliberately - its reservation is cleared when the agent starts, so approval
+  is observable there, while a tool event has no such lifecycle and marking one
+  would charge a denial to a call the user allowed. With nothing to confirm a
+  Workflow ran, that inference is bounded by the rolling window: an identical
+  call inside it is the retry the ladder counts, a later repeat is a fresh
+  decision.
+
 - Accumulate prompt notices instead of letting the last one win. The
   confirmation that a bypass armed shared one slot with the high-context
   warning, so arming `[allow-agent-burst]` in a heavy session produced only the
