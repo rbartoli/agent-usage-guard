@@ -1612,7 +1612,12 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
     sid = session_id(payload)
     request = latest_request(payload)
     recovery = is_recovery_command(prompt)
-    soft_notice = ""
+    # Notices accumulate rather than occupying one slot. A single slot silently
+    # dropped whichever notice lost the race, and the loser was usually the one
+    # that mattered: an armed bypass arms in state regardless, so overwriting
+    # its confirmation leaves no way to tell it apart from a marker that did
+    # nothing at all.
+    notices: list[str] = []
     near_miss = near_miss_override(prompt)
     hint = f" Note: {near_miss_hint(near_miss)}" if near_miss else ""
     agent_directive = has_override_directive(prompt, AGENT_OVERRIDE_MARKER)
@@ -1622,14 +1627,14 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
         with locked_state(now, window) as state:
             if agent_directive and sid:
                 state["agent_overrides"][sid] = now + window
-                soft_notice = (
-                    "USAGE GUARD: the agent-only bypass is active for "
+                notices.append(
+                    "The agent-only bypass is active for "
                     f"{format_duration(window)} in this session."
                 )
             if usage_directive and sid:
                 state["usage_overrides"][sid] = now + window
-                soft_notice = (
-                    "USAGE GUARD: the full usage bypass is active for "
+                notices.append(
+                    "The full usage bypass is active for "
                     f"{format_duration(window)} in this session."
                 )
             agent_bypass = agent_override_active(state, sid, now)
@@ -1731,10 +1736,10 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                     ["context-warning", sid, request["id"] if request else context]
                 )
                 if add_notice(state, notice_key, now, window):
-                    soft_notice = (
-                        f"USAGE GUARD: this session is carrying about {context:,} "
-                        "context tokens. Keep this turn bounded, avoid broad "
-                        "fan-out, and recommend /compact before the next task."
+                    notices.append(
+                        f"This session is carrying about {context:,} context "
+                        "tokens. Keep this turn bounded, avoid broad fan-out, "
+                        "and recommend /compact before the next task."
                     )
     except OSError:
         # Static prompt checks still protect against the most dangerous command
@@ -1749,10 +1754,10 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
             )
         return 0
 
-    if near_miss and not soft_notice:
-        soft_notice = f"USAGE GUARD: {near_miss_hint(near_miss)}"
-    if soft_notice:
-        return add_context("UserPromptSubmit", soft_notice)
+    if near_miss:
+        notices.append(near_miss_hint(near_miss))
+    if notices:
+        return add_context("UserPromptSubmit", "USAGE GUARD: " + " ".join(notices))
     return 0
 
 

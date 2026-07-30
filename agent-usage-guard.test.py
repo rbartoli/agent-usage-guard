@@ -4749,6 +4749,47 @@ def test_near_miss_on_an_allowed_prompt_surfaces_as_a_notice() -> None:
         assert "[allow-agent-burst]" in context
 
 
+def test_bypass_confirmation_survives_a_high_context_warning() -> None:
+    """An armed bypass must be confirmed even when another notice fires.
+
+    The bypass arms in state either way, so losing the confirmation leaves the
+    user unable to tell an armed override from a marker that did nothing - the
+    exact ambiguity the near-miss hint exists to remove.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        heavy = root / "heavy.jsonl"
+        write_transcript(heavy, NOW - 60, 350_000)
+        armed = invoke(
+            "prompt",
+            prompt_payload("[allow-agent-burst]\nfan out now", "burst", heavy),
+            state,
+        )
+        assert armed.returncode == 0
+        context = json.loads(armed.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "agent-only bypass is active" in context, context
+        assert "350,000 context tokens" in context, context
+        assert load_state(state)["agent_overrides"]["burst"] > NOW
+
+
+def test_near_miss_hint_survives_a_high_context_warning() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        heavy = root / "heavy.jsonl"
+        write_transcript(heavy, NOW - 60, 350_000)
+        allowed = invoke(
+            "prompt",
+            prompt_payload("[allow-usage-guard] continue", "near-heavy", heavy),
+            state,
+        )
+        assert allowed.returncode == 0
+        context = json.loads(allowed.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert NEAR_MISS_HINT in context, context
+        assert "350,000 context tokens" in context, context
+
+
 def assert_states_placement(label: str, message: str) -> None:
     """A denial that names a marker must also say where the marker goes.
 

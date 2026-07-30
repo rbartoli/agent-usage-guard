@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 133 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 135 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
