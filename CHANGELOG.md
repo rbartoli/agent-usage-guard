@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-08-06
+
+- Record local interventions in a privacy-minimal journal and ship `report` so
+  anyone running the guard can see what it successfully stopped on that
+  machine. Writes only on deny, ask, notice, override arm, circuit arm, and
+  fuse trip — not on every allow. The journal stays on disk
+  (`events.jsonl` beside the state file), never includes prompt or tool
+  content, and fails open so a bad journal path cannot change allow/deny.
+  Disable with `AGENT_GUARD_EVENTS=0`.
+
 - Stop treating one model's exhaustion as an account-wide stop. Running out of
   usage credits for a single model armed the spend circuit breaker globally,
   and switching model did not clear it: the session stayed blocked for the full

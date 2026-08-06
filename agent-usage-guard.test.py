@@ -5132,6 +5132,180 @@ def test_every_denial_that_names_a_marker_states_where_it_goes() -> None:
         assert_states_placement("research effort guard", max_effort.stderr)
 
 
+def load_events(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        events.append(json.loads(line))
+    return events
+
+
+def events_path_for(state: Path) -> Path:
+    if state.name == "state.json":
+        return state.with_name("events.jsonl")
+    return state.parent / f"{state.stem}.events.jsonl"
+
+
+def test_intervention_journal_records_deny_not_allow() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        events = events_path_for(state)
+
+        allowed = invoke(
+            "pre-tool",
+            tool_payload("ok", "Read", {"file_path": "/tmp/x"}, session="j1"),
+            state,
+        )
+        assert allowed.returncode == 0
+        assert outcome(allowed) == "allow"
+        assert load_events(events) == []
+
+        blocked = invoke(
+            "prompt",
+            prompt_payload("resume all agents", session="j1"),
+            state,
+        )
+        assert blocked.returncode == 2
+        rows = load_events(events)
+        assert len(rows) == 1
+        assert rows[0]["decision"] == "deny"
+        assert rows[0]["rule"] == "agent-burst guard"
+        assert rows[0]["mode"] == "prompt"
+        assert rows[0]["session_id"] == "j1"
+        assert set(rows[0]) <= {
+            "at",
+            "session_id",
+            "mode",
+            "decision",
+            "rule",
+            "attempt",
+            "fingerprint",
+            "permission_mode",
+        }
+        blob = json.dumps(rows[0])
+        assert "resume all agents" not in blob
+
+
+def test_intervention_journal_records_ask_and_can_be_disabled() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        events = events_path_for(state)
+        fill_active_slots(state)
+        asked = blocked_agent_attempt(state, 1)
+        assert outcome(asked) == "ask"
+        rows = load_events(events)
+        assert len(rows) == 1
+        assert rows[0]["decision"] == "ask"
+        assert "active-agent" in rows[0]["rule"]
+        assert "fingerprint" in rows[0]
+        assert rows[0]["attempt"] == 1
+
+        quiet = root / "quiet.json"
+        quiet_events = events_path_for(quiet)
+        fill_active_slots(quiet)
+        silent = blocked_agent_attempt(
+            quiet,
+            1,
+            extra_env={"AGENT_GUARD_EVENTS": "0"},
+        )
+        assert outcome(silent) == "ask"
+        assert load_events(quiet_events) == []
+
+
+def test_intervention_journal_records_override_notice_and_circuit() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        override_state = root / "override.json"
+        override = invoke(
+            "prompt",
+            prompt_payload(f"{AGENT_OVERRIDE_MARKER}\n\ncontinue", session="ov"),
+            override_state,
+        )
+        assert override.returncode == 0
+        override_rows = load_events(events_path_for(override_state))
+        decisions = {row["decision"] for row in override_rows}
+        assert "override_arm" in decisions
+        assert "notice" in decisions
+        assert any(row["rule"] == "agent-bypass" for row in override_rows)
+
+        circuit_state = root / "circuit.json"
+        armed = invoke(
+            "stop-failure",
+            stop_failure_payload("Rate limit reached · resets in 1 hour"),
+            circuit_state,
+        )
+        assert armed.returncode == 0
+        circuit_rows = load_events(events_path_for(circuit_state))
+        assert len(circuit_rows) == 1
+        assert circuit_rows[0]["decision"] == "circuit_arm"
+        assert circuit_rows[0]["rule"] == "usage circuit breaker"
+
+
+def test_intervention_journal_fail_open_and_report_summarises() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = root / "state.json"
+        # A directory at the journal path makes writes fail; the deny must hold.
+        broken = root / "not-a-file.jsonl"
+        broken.mkdir()
+        blocked = invoke(
+            "prompt",
+            prompt_payload("resume all agents", session="fo"),
+            state,
+            extra_env={"AGENT_GUARD_EVENTS_PATH": str(broken)},
+        )
+        assert blocked.returncode == 2
+        assert "agent-burst guard" in blocked.stderr
+        assert broken.is_dir()
+
+        good = root / "good.json"
+        invoke(
+            "prompt",
+            prompt_payload("resume all agents", session="rpt"),
+            good,
+        )
+        fill_active_slots(good)
+        blocked_agent_attempt(good, 1)
+        env = os.environ.copy()
+        env.update(
+            {
+                "AGENT_GUARD_STATE": str(good),
+                "AGENT_GUARD_EVENTS_PATH": str(events_path_for(good)),
+                "AGENT_GUARD_NOW": str(NOW),
+            }
+        )
+        empty_env = env.copy()
+        empty_env["AGENT_GUARD_EVENTS_PATH"] = str(root / "empty-events.jsonl")
+        empty = subprocess.run(
+            [sys.executable, str(GUARD), "report", "--days", "30"],
+            capture_output=True,
+            text=True,
+            env=empty_env,
+            check=False,
+        )
+        assert empty.returncode == 0
+        assert "no interventions recorded" in empty.stdout
+
+        report = subprocess.run(
+            [sys.executable, str(GUARD), "report", "--days", "30"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert report.returncode == 0
+        assert "intervention(s)" in report.stdout
+        assert "By rule:" in report.stdout
+        assert "agent-burst guard" in report.stdout
+        assert "active-agent" in report.stdout
+
+
 def main() -> int:
     tests = [
         value for name, value in sorted(globals().items()) if name.startswith("test_")

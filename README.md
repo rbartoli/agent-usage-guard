@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 143 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 147 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -135,6 +135,23 @@ A prompt that *opens* with a marker but puts other text on the same line — `[a
 
 Recovery commands (`/status`, `/model`, `/compact`, `/clear`, `/context`, `/usage`) are always allowed, even under an active block.
 
+## See what it guarded
+
+Interventions are written to a local journal on this machine. After the guard has been running, summarise them:
+
+```sh
+python3 /path/to/agent-usage-guard.py report
+python3 /path/to/agent-usage-guard.py report --days 7
+```
+
+Plugin install:
+
+```sh
+python3 "${CLAUDE_PLUGIN_ROOT}/agent-usage-guard.py" report
+```
+
+The report stays on disk: counts by rule, asks vs denials vs fuse trips, overrides armed, and circuit-breaker arms. It never leaves the machine and never includes prompt text, tool inputs, errors, or model output. Set `AGENT_GUARD_EVENTS=0` to stop writing the journal; `report` still reads whatever was already recorded.
+
 ## Security and privacy
 
 Claude Code hooks run locally with your user permissions, so inspect any hook before installing it. This guard is deliberately small and auditable:
@@ -143,7 +160,8 @@ Claude Code hooks run locally with your user permissions, so inspect any hook be
 - It reads hook payloads and the documented transcript tail only to derive counters and token estimates.
 - It stores hashes, ids, timestamps, counters, and token estimates — never prompt text, tool inputs, errors, or model output. While an Agent permission is unresolved, its provisional record also stores the parent transcript path and byte offset so a manual denial can be reconciled; that record expires after five minutes by default.
 - Its state file lives at `$XDG_STATE_HOME/agent-usage-guard/state.json` (normally `~/.local/state/agent-usage-guard/state.json`).
-- State writes use file locking where available and atomic replacement. If state cannot be read or written safely, state-dependent checks fail open.
+- Its intervention journal lives at `$XDG_STATE_HOME/agent-usage-guard/events.jsonl` (same directory). Entries are privacy-minimal and retained longer than enforcement state so `report` can show what the guard stopped on this machine.
+- State and journal writes use file locking where available and atomic replacement. If state cannot be read or written safely, state-dependent checks fail open. Journal write failures never change allow/deny behaviour.
 
 Set `AGENT_GUARD=0` to disable the guard without uninstalling it.
 
@@ -166,6 +184,10 @@ All via environment variables. Defaults in parentheses.
 |---|---|
 | `AGENT_GUARD` | Master toggle — set `0`/`false`/`off` to disable (`1`) |
 | `AGENT_GUARD_STATE` | State file path (`$XDG_STATE_HOME/agent-usage-guard/state.json`) |
+| `AGENT_GUARD_EVENTS` | Intervention journal toggle — set `0`/`false`/`off` to stop recording (`1`) |
+| `AGENT_GUARD_EVENTS_PATH` | Intervention journal path (`$XDG_STATE_HOME/agent-usage-guard/events.jsonl`) |
+| `AGENT_GUARD_EVENTS_RETENTION_SECONDS` | How long journal entries are kept (`31536000`, 365 days) |
+| `AGENT_GUARD_EVENTS_MAX` | Maximum journal entries retained (`50000`) |
 | `AGENT_GUARD_WINDOW_SECONDS` | Rolling window for budgets and history, capped at 24 hours (`600`) |
 | `AGENT_GUARD_AGENT_MAX` | Max concurrently active subagents (`4`) |
 | `AGENT_GUARD_ROLLING_MAX` | Max agent starts/resumes per window (`12`) |

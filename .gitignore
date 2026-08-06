@@ -2,6 +2,7 @@ __pycache__/
 .coverage
 .coverage.*
 .ruff_cache/
+.venv-cov/
 *.pyc
 *.tmp
 state.json

@@ -27,6 +27,7 @@ Hook modes:
 * ``subagent-stop``       - SubagentStop
 * ``permission-denied``   - PermissionDenied (auto-mode denial rollback)
 * ``post-compact``        - PostCompact
+* ``report``              - local summary of interventions (CLI, not a hook)
 
 An override marker bypasses limits for ten minutes only when it is the first
 non-blank line of a user prompt and appears alone on that line.
@@ -44,7 +45,9 @@ prompt checks that do not need state can still block a dangerous burst.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
+import contextvars
 import datetime as dt
 import hashlib
 import json
@@ -97,7 +100,41 @@ DEFAULT_TOOL_FAILURE_MAX = 3
 DEFAULT_BLOCK_FUSE_MAX = 5
 DEFAULT_BLOCK_FUSE_SECONDS = DEFAULT_WINDOW_SECONDS
 DEFAULT_STATE_EVENT_MAX = 10_000
+DEFAULT_EVENTS_RETENTION_SECONDS = 365 * 24 * 60 * 60
+DEFAULT_EVENTS_MAX = 50_000
 MAX_TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
+
+BLOCKED_RULE_PATTERN = re.compile(
+    r"agent-usage-guard's\s+([^:]+?):",
+    re.IGNORECASE,
+)
+EVENT_DECISIONS = frozenset(
+    {
+        "ask",
+        "deny",
+        "notice",
+        "circuit_arm",
+        "override_arm",
+        "fuse_trip",
+    }
+)
+EVENT_ALLOWED_KEYS = frozenset(
+    {
+        "at",
+        "session_id",
+        "mode",
+        "decision",
+        "rule",
+        "attempt",
+        "fingerprint",
+        "permission_mode",
+    }
+)
+
+_hook_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "agent_usage_guard_hook",
+    default=None,
+)
 
 BROAD_RESUME_PATTERNS = (
     re.compile(
@@ -230,6 +267,186 @@ def state_path() -> Path:
         )
     )
     return root / "agent-usage-guard" / "state.json"
+
+
+def events_enabled() -> bool:
+    return os.environ.get("AGENT_GUARD_EVENTS", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def events_path() -> Path:
+    override = os.environ.get("AGENT_GUARD_EVENTS_PATH")
+    if override:
+        return Path(override).expanduser()
+    state = state_path()
+    # Canonical installs use state.json → events.jsonl. Tests often place many
+    # state files in one temp directory; give those a unique sibling journal so
+    # they do not clobber each other.
+    if state.name == "state.json":
+        return state.with_name("events.jsonl")
+    return state.parent / f"{state.stem}.events.jsonl"
+
+
+def rule_from_message(message: str) -> str:
+    matches = list(BLOCKED_RULE_PATTERN.finditer(message))
+    if matches:
+        return matches[-1].group(1).strip()
+    if message.startswith("USAGE GUARD:"):
+        return "notice"
+    return "unknown"
+
+
+def decision_for_intervention(base: str, rule: str) -> str:
+    if base in EVENT_DECISIONS:
+        if base == "deny" and "fuse" in rule.lower():
+            return "fuse_trip"
+        return base
+    if "fuse" in rule.lower():
+        return "fuse_trip"
+    return "deny"
+
+
+def bind_hook_context(mode: str, payload: dict[str, Any]) -> contextvars.Token:
+    permission = payload.get("permission_mode")
+    return _hook_context.set(
+        {
+            "mode": mode,
+            "session_id": session_id(payload),
+            "permission_mode": permission if isinstance(permission, str) else None,
+        }
+    )
+
+
+def record_intervention(
+    *,
+    decision: str,
+    rule: str = "",
+    mode: str = "",
+    session_id: str = "",
+    attempt: int | None = None,
+    fingerprint: str | None = None,
+    permission_mode: str | None = None,
+    message: str = "",
+    now: float | None = None,
+) -> None:
+    """Append one privacy-minimal intervention to the local events journal.
+
+    Fail-open: journal I/O never changes allow/deny behaviour. Records carry
+    hashes, ids, timestamps, and rule names only — never prompt text, tool
+    inputs, errors, or model output.
+    """
+    if not events_enabled():
+        return
+    ctx = _hook_context.get() or {}
+    resolved_rule = (rule or rule_from_message(message) or "unknown").strip()
+    resolved_decision = decision_for_intervention(decision, resolved_rule)
+    stamp = float(now if now is not None else now_seconds())
+    event: dict[str, Any] = {
+        "at": stamp,
+        "session_id": session_id or str(ctx.get("session_id") or ""),
+        "mode": mode or str(ctx.get("mode") or ""),
+        "decision": resolved_decision,
+        "rule": resolved_rule,
+    }
+    if attempt is not None:
+        event["attempt"] = int(attempt)
+    if fingerprint:
+        event["fingerprint"] = str(fingerprint)
+    perm = permission_mode
+    if perm is None:
+        perm = ctx.get("permission_mode")
+    if isinstance(perm, str) and perm:
+        event["permission_mode"] = perm
+    # Drop anything outside the public schema before it hits disk.
+    event = {key: event[key] for key in EVENT_ALLOWED_KEYS if key in event}
+    try:
+        _write_event(event, stamp)
+    except OSError:
+        return
+
+
+def _read_event_lines(path: Path, cutoff: float) -> list[dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    if not path.is_file():
+        return kept
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                item = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(item, dict):
+                continue
+            at = item.get("at")
+            if not is_finite_number(at) or float(at) < cutoff:
+                continue
+            cleaned = {
+                key: item[key] for key in EVENT_ALLOWED_KEYS if key in item
+            }
+            if "decision" in cleaned and "rule" in cleaned:
+                kept.append(cleaned)
+    return kept
+
+
+def _write_event(event: dict[str, Any], now: float) -> None:
+    path = events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    retention = env_int(
+        "AGENT_GUARD_EVENTS_RETENTION_SECONDS",
+        DEFAULT_EVENTS_RETENTION_SECONDS,
+        1,
+    )
+    maximum = env_int("AGENT_GUARD_EVENTS_MAX", DEFAULT_EVENTS_MAX, 1)
+    cutoff = now - retention
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+b") as lock_handle:
+        if fcntl is not None:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            existing = _read_event_lines(path, cutoff)
+            existing.append(event)
+            if len(existing) > maximum:
+                existing = existing[-maximum:]
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(path.parent),
+                prefix=".events-",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    for item in existing:
+                        handle.write(json.dumps(item, separators=(",", ":")) + "\n")
+                os.replace(tmp_name, path)
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_name)
+                raise
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def load_events(*, now: float | None = None, since: float | None = None) -> list[dict[str, Any]]:
+    stamp = float(now if now is not None else now_seconds())
+    retention = env_int(
+        "AGENT_GUARD_EVENTS_RETENTION_SECONDS",
+        DEFAULT_EVENTS_RETENTION_SECONDS,
+        1,
+    )
+    cutoff = stamp - retention
+    if since is not None:
+        cutoff = max(cutoff, float(since))
+    try:
+        return _read_event_lines(events_path(), cutoff)
+    except OSError:
+        return []
 
 
 def empty_state() -> dict[str, Any]:
@@ -1307,7 +1524,7 @@ def block(message: str) -> int:
     return 2
 
 
-def block_prompt(message: str) -> int:
+def block_prompt(message: str, *, rule: str = "", now: float | None = None) -> int:
     """Deny a prompt-side event without Claude Code's ``[command]: `` prefix.
 
     A bare exit 2 makes Claude Code render the configured hook command ahead of
@@ -1324,6 +1541,12 @@ def block_prompt(message: str) -> int:
     two-phase reservation accounting has not been exercised against a decision
     document, so that move belongs in its own change.
     """
+    record_intervention(
+        decision="deny",
+        rule=rule,
+        message=message,
+        now=now,
+    )
     print(
         json.dumps(
             {"decision": "block", "reason": message},
@@ -1333,7 +1556,14 @@ def block_prompt(message: str) -> int:
     return block(message)
 
 
-def block_tool(message: str) -> int:
+def block_tool(
+    message: str,
+    *,
+    rule: str = "",
+    attempt: int | None = None,
+    fingerprint: str | None = None,
+    now: float | None = None,
+) -> int:
     """Deny a tool call without Claude Code's ``[command]: `` prefix.
 
     Same rationale as :func:`block_prompt`, using the ``PreToolUse`` decision
@@ -1346,6 +1576,14 @@ def block_tool(message: str) -> int:
     ``permission_denials``, and neither emits ``PermissionDenied`` - so the
     two-phase reservation accounting behaves identically either way.
     """
+    record_intervention(
+        decision="deny",
+        rule=rule,
+        message=message,
+        attempt=attempt,
+        fingerprint=fingerprint,
+        now=now,
+    )
     print(
         json.dumps(
             {
@@ -1380,7 +1618,14 @@ def prompts_the_user(payload: dict[str, Any]) -> bool:
     return payload.get("permission_mode") not in SILENT_PERMISSION_MODES
 
 
-def ask_tool(message: str) -> int:
+def ask_tool(
+    message: str,
+    *,
+    rule: str = "",
+    attempt: int | None = None,
+    fingerprint: str | None = None,
+    now: float | None = None,
+) -> int:
     """Escalate a tool call to the user instead of denying it outright.
 
     ``UserPromptSubmit`` has no interactive decision, so prompt-side guards stay
@@ -1397,6 +1642,14 @@ def ask_tool(message: str) -> int:
     :func:`permission_denied` unwinds it - and records the refusal - if the user
     says no.
     """
+    record_intervention(
+        decision="ask",
+        rule=rule,
+        message=message,
+        attempt=attempt,
+        fingerprint=fingerprint,
+        now=now,
+    )
     print(
         json.dumps(
             {
@@ -1412,7 +1665,19 @@ def ask_tool(message: str) -> int:
     return 0
 
 
-def add_context(event_name: str, message: str) -> int:
+def add_context(
+    event_name: str,
+    message: str,
+    *,
+    rule: str = "",
+    now: float | None = None,
+) -> int:
+    record_intervention(
+        decision="notice",
+        rule=rule or "notice",
+        message=message,
+        now=now,
+    )
     print(
         json.dumps(
             {
@@ -1641,12 +1906,22 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
         with locked_state(now, window) as state:
             if agent_directive and sid:
                 state["agent_overrides"][sid] = now + window
+                record_intervention(
+                    decision="override_arm",
+                    rule="agent-bypass",
+                    now=now,
+                )
                 notices.append(
                     "The agent-only bypass is active for "
                     f"{format_duration(window)} in this session."
                 )
             if usage_directive and sid:
                 state["usage_overrides"][sid] = now + window
+                record_intervention(
+                    decision="override_arm",
+                    rule="usage-bypass",
+                    now=now,
+                )
                 notices.append(
                     "The full usage bypass is active for "
                     f"{format_duration(window)} in this session."
@@ -1925,6 +2200,7 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
     hard_deny = False
     known_target_agent_id = ""
     duplicate_pending_target = False
+    attempt = 1
 
     try:
         with locked_state(now, window) as state:
@@ -2348,7 +2624,16 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
 
     if not block_reason:
         return 0
-    return block_tool(block_reason) if hard_deny else ask_tool(block_reason)
+    kwargs = {
+        "attempt": attempt,
+        "fingerprint": fingerprint,
+        "now": now,
+    }
+    return (
+        block_tool(block_reason, **kwargs)
+        if hard_deny
+        else ask_tool(block_reason, **kwargs)
+    )
 
 
 def tool_failure(payload: dict[str, Any], now: float, window: int) -> int:
@@ -2735,6 +3020,11 @@ def stop_failure(payload: dict[str, Any], now: float, window: int) -> int:
                 "until": until,
                 "category": category,
             }
+            record_intervention(
+                decision="circuit_arm",
+                rule="usage circuit breaker",
+                now=now,
+            )
     except OSError:
         pass
     return 0
@@ -3002,38 +3292,110 @@ def post_compact(payload: dict[str, Any], now: float, window: int) -> int:
     return 0
 
 
+def format_report(events: list[dict[str, Any]], *, days: int) -> str:
+    if not events:
+        return (
+            f"agent-usage-guard: no interventions recorded in the last {days} "
+            "day(s) on this machine."
+        )
+
+    by_decision: dict[str, int] = {}
+    by_rule: dict[str, int] = {}
+    for item in events:
+        decision = str(item.get("decision") or "unknown")
+        rule = str(item.get("rule") or "unknown")
+        by_decision[decision] = by_decision.get(decision, 0) + 1
+        by_rule[rule] = by_rule.get(rule, 0) + 1
+
+    stops = sum(
+        by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip")
+    )
+    lines = [
+        f"agent-usage-guard: {len(events)} intervention(s) in the last "
+        f"{days} day(s) on this machine.",
+        (
+            f"Stopped or escalated {stops} call(s) "
+            f"({by_decision.get('ask', 0)} ask, "
+            f"{by_decision.get('deny', 0)} deny, "
+            f"{by_decision.get('fuse_trip', 0)} fuse trip)."
+        ),
+    ]
+    if by_decision.get("notice"):
+        lines.append(f"Notices: {by_decision['notice']}.")
+    if by_decision.get("override_arm"):
+        lines.append(f"Overrides armed: {by_decision['override_arm']}.")
+    if by_decision.get("circuit_arm"):
+        lines.append(f"Circuit breaker armed: {by_decision['circuit_arm']}.")
+    lines.append("By rule:")
+    for rule, count in sorted(by_rule.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"  {count:>4}  {rule}")
+    return "\n".join(lines)
+
+
+def report_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="agent-usage-guard.py report",
+        description=(
+            "Summarise local guard interventions on this machine. "
+            "Reads the privacy-minimal events journal only."
+        ),
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help="How many days of journal history to include (default: 30)",
+    )
+    args = parser.parse_args(argv)
+    days = max(1, int(args.days))
+    now = now_seconds()
+    since = now - days * 24 * 60 * 60
+    events = load_events(now=now, since=since)
+    print(format_report(events, days=days))
+    return 0
+
+
 def dispatch(
     mode: str,
     payload: dict[str, Any],
     now: float,
     window: int,
 ) -> int:
-    if mode == "prompt":
-        return prompt_guard(payload, now, window)
-    if mode == "prompt-expansion":
-        return prompt_expansion_guard(payload, now, window)
-    if mode == "pre-tool":
-        return pre_tool_guard(payload, now, window)
-    if mode == "post-tool":
-        return post_tool(payload, now, window)
-    if mode == "tool-failure":
-        return tool_failure(payload, now, window)
-    if mode == "observe-stop":
-        return observe_stop(payload, now, window)
-    if mode == "stop-failure":
-        return stop_failure(payload, now, window)
-    if mode == "subagent-start":
-        return subagent_start(payload, now, window)
-    if mode == "subagent-stop":
-        return subagent_stop(payload, now, window)
-    if mode == "permission-denied":
-        return permission_denied(payload, now, window)
-    if mode == "post-compact":
-        return post_compact(payload, now, window)
-    return 0
+    token = bind_hook_context(mode, payload)
+    try:
+        if mode == "prompt":
+            return prompt_guard(payload, now, window)
+        if mode == "prompt-expansion":
+            return prompt_expansion_guard(payload, now, window)
+        if mode == "pre-tool":
+            return pre_tool_guard(payload, now, window)
+        if mode == "post-tool":
+            return post_tool(payload, now, window)
+        if mode == "tool-failure":
+            return tool_failure(payload, now, window)
+        if mode == "observe-stop":
+            return observe_stop(payload, now, window)
+        if mode == "stop-failure":
+            return stop_failure(payload, now, window)
+        if mode == "subagent-start":
+            return subagent_start(payload, now, window)
+        if mode == "subagent-stop":
+            return subagent_stop(payload, now, window)
+        if mode == "permission-denied":
+            return permission_denied(payload, now, window)
+        if mode == "post-compact":
+            return post_compact(payload, now, window)
+        return 0
+    finally:
+        _hook_context.reset(token)
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) > 1 and argv[1] == "report":
+        try:
+            return report_main(argv[2:])
+        except Exception:  # noqa: BLE001 - report must not crash the shell.
+            return 0
     if not enabled():
         return 0
     try:
