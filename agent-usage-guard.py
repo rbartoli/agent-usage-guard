@@ -3322,8 +3322,10 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
 
     stops = sum(by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip"))
     lines = [
-        f"agent-usage-guard: {len(events)} intervention(s) in the last "
-        f"{days} day(s) on this machine.",
+        (
+            f"agent-usage-guard: {len(events)} intervention(s) in the last "
+            f"{days} day(s) on this machine."
+        ),
         (
             f"Stopped or escalated {stops} call(s) "
             f"({by_decision.get('ask', 0)} ask, "

@@ -45,25 +45,28 @@ jobs:
           - "3.13"
           - "3.14"
 
+    # Interpreters come from uv, not actions/setup-python: the self-hosted
+    # runners are Ubuntu 26.04, for which python-versions publishes no 3.9
+    # build, and 3.9 is the floor this guard promises to run on.
+    env:
+      UV: uv run --python ${{ matrix.python-version }}
+      COV: uv run --python ${{ matrix.python-version }} --with coverage==7.10.6
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install coverage tooling
-        if: matrix.python-version == '3.14'
-        run: python -m pip install coverage==7.10.6
+      - uses: astral-sh/setup-uv@v9
+      - name: Provision Python
+        run: uv python install ${{ matrix.python-version }}
       - name: Compile
-        run: python -m py_compile agent-usage-guard.py agent-usage-guard.test.py mutation-smoke.py demo/run_demo.py demo/fixture/northstar-api/src/auth.py demo/fixture/northstar-api/src/database.py
+        run: $UV python -m py_compile agent-usage-guard.py agent-usage-guard.test.py mutation-smoke.py demo/run_demo.py demo/fixture/northstar-api/src/auth.py demo/fixture/northstar-api/src/database.py
       - name: Test
         if: matrix.python-version != '3.14'
-        run: python agent-usage-guard.test.py
+        run: $UV python agent-usage-guard.test.py
       - name: Test with branch coverage
         if: matrix.python-version == '3.14'
         run: |
-          coverage run agent-usage-guard.test.py
-          coverage combine --quiet
-          coverage report --include='*/agent-usage-guard.py,*/demo/run_demo.py'
+          $COV coverage run agent-usage-guard.test.py
+          $COV coverage combine --quiet
+          $COV coverage report --include='*/agent-usage-guard.py,*/demo/run_demo.py'
       - name: Mutation smoke test
         if: matrix.python-version == '3.14'
-        run: python mutation-smoke.py
+        run: $UV python mutation-smoke.py
