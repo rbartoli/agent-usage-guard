@@ -256,6 +256,19 @@ def enabled() -> bool:
     }
 
 
+def foreign_host() -> bool:
+    """True when a non-Claude agent CLI is running this hook.
+
+    Cursor Agent imports the plugins enabled in ``~/.claude/settings.json`` and
+    runs their hooks under its own event names, exporting ``CURSOR_PLUGIN_ROOT``
+    beside the ``CLAUDE_PLUGIN_ROOT`` compatibility alias. Everything this guard
+    accounts for - context rebuilt, requests spent, agents in flight - is Claude
+    session state, so a foreign host would be blocked on another tool's usage
+    with no way to act on the advice. Claude Code never sets that variable.
+    """
+    return bool(os.environ.get("CURSOR_PLUGIN_ROOT", "").strip())
+
+
 def state_path() -> Path:
     override = os.environ.get("AGENT_GUARD_STATE")
     if override:
@@ -387,9 +400,7 @@ def _read_event_lines(path: Path, cutoff: float) -> list[dict[str, Any]]:
             at = item.get("at")
             if not is_finite_number(at) or float(at) < cutoff:
                 continue
-            cleaned = {
-                key: item[key] for key in EVENT_ALLOWED_KEYS if key in item
-            }
+            cleaned = {key: item[key] for key in EVENT_ALLOWED_KEYS if key in item}
             if "decision" in cleaned and "rule" in cleaned:
                 kept.append(cleaned)
     return kept
@@ -433,7 +444,9 @@ def _write_event(event: dict[str, Any], now: float) -> None:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
-def load_events(*, now: float | None = None, since: float | None = None) -> list[dict[str, Any]]:
+def load_events(
+    *, now: float | None = None, since: float | None = None
+) -> list[dict[str, Any]]:
     stamp = float(now if now is not None else now_seconds())
     retention = env_int(
         "AGENT_GUARD_EVENTS_RETENTION_SECONDS",
@@ -3307,12 +3320,12 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
         by_decision[decision] = by_decision.get(decision, 0) + 1
         by_rule[rule] = by_rule.get(rule, 0) + 1
 
-    stops = sum(
-        by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip")
-    )
+    stops = sum(by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip"))
     lines = [
-        f"agent-usage-guard: {len(events)} intervention(s) in the last "
-        f"{days} day(s) on this machine.",
+        (
+            f"agent-usage-guard: {len(events)} intervention(s) in the last "
+            f"{days} day(s) on this machine."
+        ),
         (
             f"Stopped or escalated {stops} call(s) "
             f"({by_decision.get('ask', 0)} ask, "
@@ -3396,7 +3409,7 @@ def main(argv: list[str]) -> int:
             return report_main(argv[2:])
         except Exception:  # noqa: BLE001 - report must not crash the shell.
             return 0
-    if not enabled():
+    if not enabled() or foreign_host():
         return 0
     try:
         mode = argv[1] if len(argv) > 1 else ""

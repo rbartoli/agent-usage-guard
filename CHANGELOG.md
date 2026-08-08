@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Stay out of agent CLIs that are not Claude Code. Cursor Agent imports the
+  plugins enabled in `~/.claude/settings.json` and runs their hooks under its
+  own event names, so the guard was refusing Cursor prompts on the strength of
+  a Claude session's context and usage — advice that host cannot act on, with
+  `/compact` and the escape markers both meaningless there. Cursor exports
+  `CURSOR_PLUGIN_ROOT` beside the `CLAUDE_PLUGIN_ROOT` compatibility alias;
+  the guard now sees it, exits 0, and records nothing. Found by dogfooding.
+
 ## 0.2.1 — 2026-08-06
 
 - Record local interventions in a privacy-minimal journal and ship `report` so

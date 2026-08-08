@@ -17,7 +17,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 - **Local and privacy-minimal** — no network calls; never stores prompt text, tool inputs, errors, or model output
 - **Dependency-free** — one Python file, Python 3.9+ standard library only
 - **Crash-safe** — malformed input or state I/O errors never wedge Claude Code; state-dependent checks fail open
-- **Tested** — 147 end-to-end regression tests across Python 3.9–3.14, with
+- **Tested** — 148 end-to-end regression tests across Python 3.9–3.14, with
   branch-aware coverage enforced at 90%
 
 ## Install
@@ -164,6 +164,10 @@ Claude Code hooks run locally with your user permissions, so inspect any hook be
 - State and journal writes use file locking where available and atomic replacement. If state cannot be read or written safely, state-dependent checks fail open. Journal write failures never change allow/deny behaviour.
 
 Set `AGENT_GUARD=0` to disable the guard without uninstalling it.
+
+## Other agent CLIs that import Claude plugins
+
+Cursor Agent loads the plugins enabled in `~/.claude/settings.json` and runs their hooks under its own event names (`UserPromptSubmit` becomes `beforeSubmitPrompt`, and so on), exporting `CURSOR_PLUGIN_ROOT` beside the `CLAUDE_PLUGIN_ROOT` compatibility alias. Everything this guard accounts for is Claude session state, so a prompt there would be refused over another tool's usage. The guard sees `CURSOR_PLUGIN_ROOT`, exits 0, and records nothing.
 
 ## Uninstall
 
