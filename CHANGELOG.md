@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 — 2026-08-08
+
 - Stay out of agent CLIs that are not Claude Code. Cursor Agent imports the
   plugins enabled in `~/.claude/settings.json` and runs their hooks under its
   own event names, so the guard was refusing Cursor prompts on the strength of
@@ -9,6 +11,14 @@
   `/compact` and the escape markers both meaningless there. Cursor exports
   `CURSOR_PLUGIN_ROOT` beside the `CLAUDE_PLUGIN_ROOT` compatibility alias;
   the guard now sees it, exits 0, and records nothing. Found by dogfooding.
+
+- Run CI on the organisation's shared self-hosted runners, which is why the org
+  exists. The lane had been asking for `ubuntu-latest` and could not start at
+  all, so nothing it checked was ever reported: Python 3.9 now comes from `uv`
+  because the runners are Ubuntu 26.04, for which `actions/python-versions`
+  publishes no 3.9 build, and three findings ruff 0.16.0 had been unable to
+  report are fixed — ISC004 on the report header, EXE001 on `mutation-smoke.py`,
+  and the formatter drift `main` predated.
 
 ## 0.2.1 — 2026-08-06
 
