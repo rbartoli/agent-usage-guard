@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +32,7 @@ jobs:
         run: npx --yes @anthropic-ai/claude-code@2.1.220 plugin validate . --strict
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       fail-fast: false

@@ -400,9 +400,7 @@ def _read_event_lines(path: Path, cutoff: float) -> list[dict[str, Any]]:
             at = item.get("at")
             if not is_finite_number(at) or float(at) < cutoff:
                 continue
-            cleaned = {
-                key: item[key] for key in EVENT_ALLOWED_KEYS if key in item
-            }
+            cleaned = {key: item[key] for key in EVENT_ALLOWED_KEYS if key in item}
             if "decision" in cleaned and "rule" in cleaned:
                 kept.append(cleaned)
     return kept
@@ -446,7 +444,9 @@ def _write_event(event: dict[str, Any], now: float) -> None:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
-def load_events(*, now: float | None = None, since: float | None = None) -> list[dict[str, Any]]:
+def load_events(
+    *, now: float | None = None, since: float | None = None
+) -> list[dict[str, Any]]:
     stamp = float(now if now is not None else now_seconds())
     retention = env_int(
         "AGENT_GUARD_EVENTS_RETENTION_SECONDS",
@@ -3320,9 +3320,7 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
         by_decision[decision] = by_decision.get(decision, 0) + 1
         by_rule[rule] = by_rule.get(rule, 0) + 1
 
-    stops = sum(
-        by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip")
-    )
+    stops = sum(by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip"))
     lines = [
         f"agent-usage-guard: {len(events)} intervention(s) in the last "
         f"{days} day(s) on this machine.",
