@@ -53,7 +53,7 @@ jobs:
       COV: uv run --python ${{ matrix.python-version }} --with coverage==7.10.6
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v9.0.0
       - name: Provision Python
         run: uv python install ${{ matrix.python-version }}
       - name: Compile
