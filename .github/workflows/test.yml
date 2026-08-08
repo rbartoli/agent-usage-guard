@@ -28,6 +28,11 @@ jobs:
           for file in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json examples/settings-hooks.json demo/empty-mcp.json; do
             python -m json.tool "$file" >/dev/null
           done
+      # The self-hosted runners carry no node on PATH, and the plugin contract
+      # is checked by Claude Code itself, which is an npm package.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       - name: Validate Claude plugin contract
         run: npx --yes @anthropic-ai/claude-code@2.1.220 plugin validate . --strict
 
