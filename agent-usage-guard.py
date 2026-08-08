@@ -256,6 +256,19 @@ def enabled() -> bool:
     }
 
 
+def foreign_host() -> bool:
+    """True when a non-Claude agent CLI is running this hook.
+
+    Cursor Agent imports the plugins enabled in ``~/.claude/settings.json`` and
+    runs their hooks under its own event names, exporting ``CURSOR_PLUGIN_ROOT``
+    beside the ``CLAUDE_PLUGIN_ROOT`` compatibility alias. Everything this guard
+    accounts for - context rebuilt, requests spent, agents in flight - is Claude
+    session state, so a foreign host would be blocked on another tool's usage
+    with no way to act on the advice. Claude Code never sets that variable.
+    """
+    return bool(os.environ.get("CURSOR_PLUGIN_ROOT", "").strip())
+
+
 def state_path() -> Path:
     override = os.environ.get("AGENT_GUARD_STATE")
     if override:
@@ -3396,7 +3409,7 @@ def main(argv: list[str]) -> int:
             return report_main(argv[2:])
         except Exception:  # noqa: BLE001 - report must not crash the shell.
             return 0
-    if not enabled():
+    if not enabled() or foreign_host():
         return 0
     try:
         mode = argv[1] if len(argv) > 1 else ""

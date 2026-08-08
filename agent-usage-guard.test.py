@@ -408,6 +408,30 @@ def test_blocks_broad_resume_prompt() -> None:
         assert "name at most four" in proc.stderr.lower()
 
 
+def test_foreign_agent_cli_host_is_never_guarded() -> None:
+    """Cursor Agent imports enabled Claude plugins and runs their hooks.
+
+    Its hook environment carries ``CURSOR_PLUGIN_ROOT`` beside the
+    ``CLAUDE_PLUGIN_ROOT`` alias, and blocking there would refuse a prompt over
+    another tool's session state. An empty value is not a foreign host.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state.json"
+        payload = prompt_payload("continue and resume all agents")
+        allowed = invoke(
+            "prompt",
+            payload,
+            state,
+            extra_env={"CURSOR_PLUGIN_ROOT": "/home/u/.claude/plugins/cache/x"},
+        )
+        assert allowed.returncode == 0
+        assert not allowed.stderr.strip()
+        assert not state.exists()
+        blank = {"CURSOR_PLUGIN_ROOT": " "}
+        blocked = invoke("prompt", payload, state, extra_env=blank)
+        assert blocked.returncode == 2
+
+
 def test_allows_negated_broad_resume_prompt() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
