@@ -5370,6 +5370,25 @@ def test_intervention_journal_records_override_notice_and_circuit() -> None:
         assert circuit_rows[0]["decision"] == "circuit_arm"
         assert circuit_rows[0]["rule"] == "usage circuit breaker"
 
+        env = os.environ.copy()
+        env.update(
+            {
+                "AGENT_GUARD_EVENTS_PATH": str(events_path_for(circuit_state)),
+                "AGENT_GUARD_NOW": str(NOW),
+            }
+        )
+        report = subprocess.run(
+            [sys.executable, str(GUARD), "report", "--days", "30"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert report.returncode == 0
+        assert "usage circuit breaker" in report.stdout
+        assert "By tool:" not in report.stdout
+        assert "By context:" not in report.stdout
+
 
 def test_intervention_journal_fail_open_and_report_summarises() -> None:
     with tempfile.TemporaryDirectory() as tmp:

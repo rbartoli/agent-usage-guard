@@ -3540,17 +3540,14 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
             + ", ".join(f"{name} {by_tool[name]}" for name in sorted(by_tool))
         )
     if by_bucket:
-        ordered = [
-            f"{label} {by_bucket[label]}"
-            for label in CONTEXT_BUCKET_ORDER
-            if label in by_bucket
-        ]
-        extra = [
-            f"{label} {by_bucket[label]}"
-            for label in sorted(by_bucket)
-            if label not in CONTEXT_BUCKET_ORDER
-        ]
-        lines.append("By context: " + ", ".join(ordered + extra))
+        lines.append(
+            "By context: "
+            + ", ".join(
+                f"{label} {by_bucket[label]}"
+                for label in CONTEXT_BUCKET_ORDER
+                if label in by_bucket
+            )
+        )
     return "\n".join(lines)
 
 
