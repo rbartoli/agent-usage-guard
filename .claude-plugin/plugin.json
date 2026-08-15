@@ -1,6 +1,6 @@
 {
   "name": "agent-usage-guard",
   "description": "Runtime usage guard for Claude Code: caps subagent bursts and concurrency, gates high-context sessions, fuses repeated tool failures, circuit-breaks on rate limits, and escalates repeat denials to disrupt deterministic retry loops. Crash-safe, dependency-free, privacy-minimal.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": { "name": "Riccardo Bartoli" }
 }
