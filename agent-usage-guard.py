@@ -9,10 +9,11 @@ state file across Claude processes. It implements six independent protections:
 3. Prompt context gates and high-context rolling-window tool budgets.
 4. A default-deny gate for opaque Workflow fan-out, including /deep-research.
 5. A repeated identical-tool-failure fuse.
-6. An escalating denial ladder: repeated blocks of the same call get
-   differently-worded, attempt-numbered messages (never byte-identical text,
-   which induces deterministic retry loops), and repeated agent-call denials
-   trip a session-wide agent fuse as the mechanical stop.
+6. An escalating denial ladder: repeated blocks of the same condition (or the
+   same tool input for the error fuse) get differently-worded, attempt-numbered
+   messages (never byte-identical text, which induces deterministic retry
+   loops), and repeated agent-call denials trip a session-wide agent fuse as
+   the mechanical stop.
 
 Hook modes:
 
@@ -128,8 +129,34 @@ EVENT_ALLOWED_KEYS = frozenset(
         "attempt",
         "fingerprint",
         "permission_mode",
+        "tool_name",
+        "context_bucket",
     }
 )
+CONDITION_SCOPED_RULES = frozenset(
+    {
+        "high-context turn guard",
+        "active-agent guard",
+        "rolling agent guard",
+        "nested-agent guard",
+        "agent-context guard",
+    }
+)
+AGENT_BUDGET_RULES = frozenset(
+    {
+        "active-agent guard",
+        "rolling agent guard",
+        "nested-agent guard",
+        "agent-context guard",
+    }
+)
+CONTEXT_BUCKETS = (
+    (150_000, "<150k"),
+    (300_000, "150-300k"),
+    (400_000, "300-400k"),
+    (500_000, "400-500k"),
+)
+CONTEXT_BUCKET_ORDER = tuple(label for _ceiling, label in CONTEXT_BUCKETS) + (">=500k",)
 
 _hook_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "agent_usage_guard_hook",
@@ -325,13 +352,29 @@ def decision_for_intervention(base: str, rule: str) -> str:
 
 def bind_hook_context(mode: str, payload: dict[str, Any]) -> contextvars.Token:
     permission = payload.get("permission_mode")
+    tool = payload.get("tool_name")
     return _hook_context.set(
         {
             "mode": mode,
             "session_id": session_id(payload),
             "permission_mode": permission if isinstance(permission, str) else None,
+            "tool_name": tool if isinstance(tool, str) and tool else None,
         }
     )
+
+
+def context_bucket(tokens: int) -> str:
+    for ceiling, label in CONTEXT_BUCKETS:
+        if tokens < ceiling:
+            return label
+    return ">=500k"
+
+
+def remember_context(tokens: int) -> None:
+    ctx = _hook_context.get()
+    if ctx is None:
+        return
+    ctx["context_bucket"] = context_bucket(tokens)
 
 
 def record_intervention(
@@ -349,8 +392,8 @@ def record_intervention(
     """Append one privacy-minimal intervention to the local events journal.
 
     Fail-open: journal I/O never changes allow/deny behaviour. Records carry
-    hashes, ids, timestamps, and rule names only — never prompt text, tool
-    inputs, errors, or model output.
+    hashes, ids, timestamps, rule names, tool names, and coarse context
+    buckets only — never prompt text, tool inputs, errors, or model output.
     """
     if not events_enabled():
         return
@@ -374,6 +417,12 @@ def record_intervention(
         perm = ctx.get("permission_mode")
     if isinstance(perm, str) and perm:
         event["permission_mode"] = perm
+    tool_name = ctx.get("tool_name")
+    if isinstance(tool_name, str) and tool_name:
+        event["tool_name"] = tool_name
+    bucket = ctx.get("context_bucket")
+    if isinstance(bucket, str) and bucket:
+        event["context_bucket"] = bucket
     # Drop anything outside the public schema before it hits disk.
     event = {key: event[key] for key in EVENT_ALLOWED_KEYS if key in event}
     try:
@@ -1101,18 +1150,23 @@ def effective_context(
     if request is not None:
         compacted_at = state["compactions"].get(sid, 0)
         if request["at"] > compacted_at:
-            return nonnegative_int(request["context"])
-        return 0
-    candidates = [
-        item
-        for item in state["usage_events"]
-        if item.get("session_id") == sid
-        and float(item.get("at") or 0) > state["compactions"].get(sid, 0)
-    ]
-    if not candidates:
-        return 0
-    latest = max(candidates, key=lambda item: float(item.get("at") or 0))
-    return nonnegative_int(latest.get("context"))
+            tokens = nonnegative_int(request["context"])
+        else:
+            tokens = 0
+    else:
+        candidates = [
+            item
+            for item in state["usage_events"]
+            if item.get("session_id") == sid
+            and float(item.get("at") or 0) > state["compactions"].get(sid, 0)
+        ]
+        if not candidates:
+            tokens = 0
+        else:
+            latest = max(candidates, key=lambda item: float(item.get("at") or 0))
+            tokens = nonnegative_int(latest.get("context"))
+    remember_context(tokens)
+    return tokens
 
 
 def text_is_negated(text: str, match_start: int) -> bool:
@@ -1743,6 +1797,8 @@ def ladder_message(
     now: float,
     is_agent_action: bool,
     fuse_max: int,
+    *,
+    condition_scoped: bool = False,
 ) -> str:
     """Rewrite a repeated denial so no two block messages are byte-identical.
 
@@ -1754,6 +1810,12 @@ def ladder_message(
     """
 
     clock = format_clock(now)
+    target = "this condition" if condition_scoped else "this exact call"
+    retry = (
+        "another call while the condition holds"
+        if condition_scoped
+        else "an identical retry"
+    )
     if attempt <= 1:
         # Naming the alternatives here, not only at denial 2, is a deliberate
         # trade: a handful of extra tokens against a retry that re-sends the
@@ -1761,16 +1823,21 @@ def ladder_message(
         # near 44%, with escalation dropping sharply at the first rung that
         # offers a way forward.
         return (
-            f"{base} [denial 1 of this exact call at {clock}; it stays denied "
-            "while the condition holds, so an identical retry fails again. "
+            f"{base} [denial 1 of {target} at {clock}; it stays denied "
+            f"while the condition holds, so {retry} fails again. "
             "Alternatives that work: proceed without this call, pick other "
             "work, or report back]"
         )
     if attempt == 2:
+        retry_fail = (
+            "another call while the condition holds keeps failing"
+            if condition_scoped
+            else "re-issuing the identical call keeps failing"
+        )
         return (
-            "BLOCKED again by agent-usage-guard (denial 2 of this exact call "
-            f"at {clock}): the blocking condition is unchanged, so re-issuing "
-            "the identical call keeps failing. Do something different: "
+            f"BLOCKED again by agent-usage-guard (denial 2 of {target} "
+            f"at {clock}): the blocking condition is unchanged, so "
+            f"{retry_fail}. Do something different: "
             "proceed without this call, pick other work, or stop and report. "
             f"Original reason: {base}"
         )
@@ -1781,23 +1848,36 @@ def ladder_message(
             DEFAULT_BLOCK_FUSE_SECONDS,
             1,
         )
+        next_attempt = (
+            "attempt while the condition holds"
+            if condition_scoped
+            else "identical attempt"
+        )
         warning = (
-            " One more identical attempt trips the session-wide agent fuse "
+            f" One more {next_attempt} trips the session-wide agent fuse "
             f"for {format_duration(fuse_seconds)}."
         )
     return (
-        f"BLOCKED again by agent-usage-guard (denial {attempt} of this exact "
-        f"call at {clock}): retrying is not succeeding, and every retry "
+        f"BLOCKED again by agent-usage-guard (denial {attempt} of {target} "
+        f"at {clock}): retrying is not succeeding, and every retry "
         "re-sends the full conversation context. End the turn now with a "
         f"one-line checkpoint of what remains.{warning} "
         f"Original reason: {base}"
     )
 
 
-def fuse_trip_message(attempt: int, now: float, until: float, window: int) -> str:
+def fuse_trip_message(
+    attempt: int,
+    now: float,
+    until: float,
+    window: int,
+    *,
+    condition_scoped: bool = False,
+) -> str:
+    target = "the same condition" if condition_scoped else "the same call"
     return (
         "BLOCKED by agent-usage-guard's agent fuse: "
-        f"{attempt} denials of the same call within {format_duration(window)} "
+        f"{attempt} denials of {target} within {format_duration(window)} "
         f"tripped the session-wide agent fuse at {format_clock(now)}. "
         "Agent starts and resumes in this session are denied until "
         f"{format_until(until)}. End the turn with a checkpoint; do not retry "
@@ -1815,6 +1895,48 @@ def fuse_active_message(attempt: int, now: float, until: float) -> str:
         f"{marker_directive(USAGE_OVERRIDE_MARKER)} lifts the fuse only for a "
         "deliberate bypass."
     )
+
+
+def append_block_event(
+    state: dict[str, Any],
+    *,
+    sid: str,
+    fingerprint: str,
+    now: float,
+    rule: str = "",
+) -> None:
+    event: dict[str, Any] = {
+        "at": now,
+        "retention_until": now + MAX_WINDOW_SECONDS,
+        "session_id": sid,
+        "fingerprint": fingerprint,
+    }
+    if rule:
+        event["rule"] = rule
+    state.setdefault("block_events", []).append(event)
+
+
+def ladder_attempt(
+    state: dict[str, Any],
+    sid: str,
+    fingerprint: str,
+    rule: str,
+    now: float,
+    window: int,
+) -> int:
+    scoped = rule in CONDITION_SCOPED_RULES
+    matches = 0
+    for item in state.get("block_events", []):
+        if item.get("session_id") != sid:
+            continue
+        if not timed_in_window(item, now, window):
+            continue
+        if scoped and item.get("rule") == rule:
+            matches += 1
+            continue
+        if item.get("fingerprint") == fingerprint:
+            matches += 1
+    return 1 + matches
 
 
 def rate_limit_message(rate_limit: dict[str, Any]) -> str:
@@ -2034,9 +2156,7 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
                 1,
             )
             if context >= warn_context and not usage_bypass:
-                notice_key = canonical_hash(
-                    ["context-warning", sid, request["id"] if request else context]
-                )
+                notice_key = canonical_hash(["context-warning", sid])
                 if add_notice(state, notice_key, now, window):
                     notices.append(
                         f"This session is carrying about {context:,} context "
@@ -2279,44 +2399,70 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             # lease by SubagentStart or PostToolUse, and the model cannot
             # re-propose the call while its own dialog is still open.
             #
-            # Only a direct agent action reserves, so reading reservations alone
-            # left every other escalation - Workflow, and any tool tripping the
-            # context or tool-error gates - with no refusal signal at all: the
-            # ladder reported "denial 1" forever and each retry left another
-            # unused tool event behind. Those escalations are marked on the tool
-            # event instead. Nothing confirms that one ran, so the inference is
-            # bounded by the rolling window: an identical call inside it is the
-            # retry the ladder counts, while a later repeat is a fresh decision.
-            stale_ids = {
-                str(item.get("tool_use_id") or "")
-                for item in state["agent_pending"]
-                if item.get("escalated")
-                and item.get("session_id") == sid
-                and item.get("fingerprint") == fingerprint
-                and item.get("tool_use_id") != tool_id
-            } | {
-                str(item.get("id") or "")
-                for item in state["tool_events"]
-                if item.get("escalated")
-                and item.get("session_id") == sid
-                and item.get("fingerprint") == fingerprint
-                and item.get("id") != tool_id
-                and timed_in_window(item, now, window)
-            }
-            for stale_id in sorted(stale_ids):
+            # Agent-budget rules are conditions on the session, not on one
+            # prompt, so a refused 5th agent then a different 5th is still the
+            # same ladder. Approval is observable there (PostToolUse /
+            # SubagentStart clears the pending), so matching those reservations
+            # by rule is safe. High-context and other non-agent asks stay on
+            # fingerprint: PostToolUse is only wired for Agent|Task|SendMessage,
+            # and matching those by rule would charge a refusal to a call the
+            # user allowed.
+            stale_refusals: list[tuple[str, str, str]] = []
+            seen_stale: set[str] = set()
+            for item in state["agent_pending"]:
+                if not item.get("escalated") or item.get("session_id") != sid:
+                    continue
+                stale_id = str(item.get("tool_use_id") or "")
+                if not stale_id or stale_id == tool_id or stale_id in seen_stale:
+                    continue
+                same_call = item.get("fingerprint") == fingerprint
+                budget_retry = (
+                    is_direct_agent_action
+                    and str(item.get("rule") or "") in AGENT_BUDGET_RULES
+                )
+                if not (same_call or budget_retry):
+                    continue
+                seen_stale.add(stale_id)
+                stale_refusals.append(
+                    (
+                        stale_id,
+                        str(item.get("fingerprint") or fingerprint),
+                        str(item.get("rule") or ""),
+                    )
+                )
+            for item in state["tool_events"]:
+                if not (
+                    item.get("escalated")
+                    and item.get("session_id") == sid
+                    and item.get("fingerprint") == fingerprint
+                    and item.get("id") != tool_id
+                    and timed_in_window(item, now, window)
+                ):
+                    continue
+                stale_id = str(item.get("id") or "")
+                if not stale_id or stale_id in seen_stale:
+                    continue
+                seen_stale.add(stale_id)
+                stale_refusals.append(
+                    (
+                        stale_id,
+                        str(item.get("fingerprint") or fingerprint),
+                        str(item.get("rule") or ""),
+                    )
+                )
+            for stale_id, stale_fp, stale_rule in stale_refusals:
                 release_pending_attempt(
                     state,
                     sid,
                     stale_id,
                     release_tool_event=True,
                 )
-                state["block_events"].append(
-                    {
-                        "at": now,
-                        "retention_until": now + MAX_WINDOW_SECONDS,
-                        "session_id": sid,
-                        "fingerprint": fingerprint,
-                    }
+                append_block_event(
+                    state,
+                    sid=sid,
+                    fingerprint=stale_fp,
+                    now=now,
+                    rule=stale_rule,
                 )
 
             attempt = 1 + sum(
@@ -2501,56 +2647,70 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
             # permission_denied records the block event if the user declines.
             # Two states still refuse without asking: a fuse that is already
             # burning, and the attempt that trips it.
+            trip_rule = ""
             if block_reason:
                 fuse_max = env_int(
                     "AGENT_GUARD_BLOCK_FUSE_MAX",
                     DEFAULT_BLOCK_FUSE_MAX,
                     2,
                 )
+                trip_rule = rule_from_message(block_reason)
                 if laddered:
                     hard_deny = True
-                elif (
-                    is_agent_risk
-                    and attempt >= fuse_max
-                    and not (agent_bypass or usage_bypass)
-                ):
-                    until = now + env_int(
-                        "AGENT_GUARD_BLOCK_FUSE_SECONDS",
-                        DEFAULT_BLOCK_FUSE_SECONDS,
-                        1,
-                    )
-                    state["agent_fuses"][sid] = until
-                    block_reason = fuse_trip_message(
-                        attempt,
+                else:
+                    attempt = ladder_attempt(
+                        state,
+                        sid,
+                        fingerprint,
+                        trip_rule,
                         now,
-                        until,
                         window,
                     )
-                    hard_deny = True
-                else:
-                    block_reason = ladder_message(
-                        block_reason,
-                        attempt,
-                        now,
-                        is_agent_risk,
-                        fuse_max,
-                    )
-                    # A mode that suppresses prompting has no dialog to raise, so
-                    # an ask would most likely be auto-approved - silently
-                    # removing the guard's teeth in exactly the mode where a
-                    # runaway is most likely. Refuse outright instead.
-                    hard_deny = not prompts_the_user(payload)
+                    condition_scoped = trip_rule in CONDITION_SCOPED_RULES
+                    if (
+                        is_agent_risk
+                        and attempt >= fuse_max
+                        and not (agent_bypass or usage_bypass)
+                    ):
+                        until = now + env_int(
+                            "AGENT_GUARD_BLOCK_FUSE_SECONDS",
+                            DEFAULT_BLOCK_FUSE_SECONDS,
+                            1,
+                        )
+                        state["agent_fuses"][sid] = until
+                        block_reason = fuse_trip_message(
+                            attempt,
+                            now,
+                            until,
+                            window,
+                            condition_scoped=condition_scoped,
+                        )
+                        trip_rule = rule_from_message(block_reason)
+                        hard_deny = True
+                    else:
+                        block_reason = ladder_message(
+                            block_reason,
+                            attempt,
+                            now,
+                            is_agent_risk,
+                            fuse_max,
+                            condition_scoped=condition_scoped,
+                        )
+                        # A mode that suppresses prompting has no dialog to raise, so
+                        # an ask would most likely be auto-approved - silently
+                        # removing the guard's teeth in exactly the mode where a
+                        # runaway is most likely. Refuse outright instead.
+                        hard_deny = not prompts_the_user(payload)
 
                 if hard_deny:
                     # No PermissionDenied follows a hard refusal, so the ladder
                     # has to be advanced here rather than by the user's answer.
-                    state["block_events"].append(
-                        {
-                            "at": now,
-                            "retention_until": now + MAX_WINDOW_SECONDS,
-                            "session_id": sid,
-                            "fingerprint": fingerprint,
-                        }
+                    append_block_event(
+                        state,
+                        sid=sid,
+                        fingerprint=fingerprint,
+                        now=now,
+                        rule=trip_rule,
                     )
 
             # An escalated call may still run, and PostToolUse ignores any call
@@ -2605,6 +2765,7 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         # so an unresolved one can be read back as a refusal.
                         "escalated": bool(block_reason),
                         "fingerprint": fingerprint,
+                        "rule": trip_rule,
                     }
                     state["agent_pending"].append(entry)
 
@@ -2624,6 +2785,7 @@ def pre_tool_guard(payload: dict[str, Any], now: float, window: int) -> int:
                         # user allowed.
                         "fingerprint": fingerprint,
                         "escalated": bool(block_reason) and not is_direct_agent_action,
+                        "rule": trip_rule,
                     }
                 )
     except OSError:
@@ -3252,7 +3414,19 @@ def permission_denied(payload: dict[str, Any], now: float, window: int) -> int:
     try:
         with locked_state(now, window) as state:
             sid = session_id(payload)
+            rule = ""
             if is_agent_action:
+                pending = next(
+                    (
+                        item
+                        for item in state.get("agent_pending", [])
+                        if item.get("tool_use_id") == supplied_tool_id
+                        and item.get("session_id") == sid
+                    ),
+                    None,
+                )
+                if pending:
+                    rule = str(pending.get("rule") or "")
                 release_pending_attempt(
                     state,
                     sid,
@@ -3260,6 +3434,17 @@ def permission_denied(payload: dict[str, Any], now: float, window: int) -> int:
                     release_tool_event=True,
                 )
             else:
+                matching = next(
+                    (
+                        item
+                        for item in state.get("tool_events", [])
+                        if item.get("id") == supplied_tool_id
+                        and item.get("session_id") == sid
+                    ),
+                    None,
+                )
+                if matching:
+                    rule = str(matching.get("rule") or "")
                 state["tool_events"] = [
                     item
                     for item in state["tool_events"]
@@ -3272,13 +3457,12 @@ def permission_denied(payload: dict[str, Any], now: float, window: int) -> int:
             # user will allow it, so the refusal ladder is advanced here instead.
             # Only a real refusal counts; an approved call costs nothing.
             if isinstance(tool_input, dict):
-                state["block_events"].append(
-                    {
-                        "at": now,
-                        "retention_until": now + MAX_WINDOW_SECONDS,
-                        "session_id": sid,
-                        "fingerprint": tool_fingerprint(tool_name, tool_input),
-                    }
+                append_block_event(
+                    state,
+                    sid=sid,
+                    fingerprint=tool_fingerprint(tool_name, tool_input),
+                    now=now,
+                    rule=rule,
                 )
     except OSError:
         pass
@@ -3314,11 +3498,19 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
 
     by_decision: dict[str, int] = {}
     by_rule: dict[str, int] = {}
+    by_tool: dict[str, int] = {}
+    by_bucket: dict[str, int] = {}
     for item in events:
         decision = str(item.get("decision") or "unknown")
         rule = str(item.get("rule") or "unknown")
         by_decision[decision] = by_decision.get(decision, 0) + 1
         by_rule[rule] = by_rule.get(rule, 0) + 1
+        tool_name = item.get("tool_name")
+        if isinstance(tool_name, str) and tool_name:
+            by_tool[tool_name] = by_tool.get(tool_name, 0) + 1
+        bucket = item.get("context_bucket")
+        if isinstance(bucket, str) and bucket:
+            by_bucket[bucket] = by_bucket.get(bucket, 0) + 1
 
     stops = sum(by_decision.get(key, 0) for key in ("deny", "ask", "fuse_trip"))
     lines = [
@@ -3342,6 +3534,20 @@ def format_report(events: list[dict[str, Any]], *, days: int) -> str:
     lines.append("By rule:")
     for rule, count in sorted(by_rule.items(), key=lambda item: (-item[1], item[0])):
         lines.append(f"  {count:>4}  {rule}")
+    if by_tool:
+        lines.append(
+            "By tool: "
+            + ", ".join(f"{name} {by_tool[name]}" for name in sorted(by_tool))
+        )
+    if by_bucket:
+        lines.append(
+            "By context: "
+            + ", ".join(
+                f"{label} {by_bucket[label]}"
+                for label in CONTEXT_BUCKET_ORDER
+                if label in by_bucket
+            )
+        )
     return "\n".join(lines)
 
 

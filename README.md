@@ -57,9 +57,9 @@ The next runaway burst hits a wall — and the model can read the wall:
 ```text
 BLOCKED by agent-usage-guard's active-agent guard: 4 agents are already active.
 Wait for one to finish before starting or resuming another. [denial 1 of this
-exact call at 14:32:07; it stays denied while the condition holds, so an
-identical retry fails again. Alternatives that work: proceed without this call,
-pick other work, or report back]
+condition at 14:32:07; it stays denied while the condition holds, so another
+call while the condition holds fails again. Alternatives that work: proceed
+without this call, pick other work, or report back]
 ```
 
 That message goes to **the model**, not just to you: the reason is fed back into the loop, so Claude course-corrects — waits, batches the work, or asks you — instead of burning through your window. Your session keeps working; the burst doesn't.
@@ -70,7 +70,7 @@ In `bypassPermissions` and `dontAsk` there is no dialog to raise, so a tool trip
 
 **Prompt-side guards stay hard blocks**, because `UserPromptSubmit` has no interactive decision to return — and for the context guards it could not have one anyway: the API call that would carry the question *is* the context rebuild those guards exist to prevent. Those you still answer with an escape marker.
 
-And if the model retries the escalated tool call after you refuse it? **Every repeat refusal of that call is differently worded** — repeating byte-identical error text is exactly what makes agent retry loops deterministic. Denial 2 tells it the condition hasn't changed and to do something different; denial 3 tells it to end the turn; the 5th refusal trips a **session-wide agent fuse** that mechanically ends the loop. Past that point the guard stops asking and denies outright, so a burning fuse costs you no keystrokes at all. Only your refusals advance that ladder — approving a call costs it nothing.
+And if the model retries the escalated tool call after you refuse it? **Every repeat refusal while the same condition holds is differently worded** — repeating byte-identical error text is exactly what makes agent retry loops deterministic. Denial 2 tells it the condition hasn't changed and to do something different; denial 3 tells it to end the turn; the 5th refusal trips a **session-wide agent fuse** that mechanically ends the loop. Past that point the guard stops asking and denies outright, so a burning fuse costs you no keystrokes at all. Only your refusals advance that ladder — approving a call costs it nothing.
 
 When you *mean* to fan out, put `[allow-agent-burst]` alone on the first non-blank line of your prompt. It lifts the agent limits for ten minutes.
 
@@ -150,7 +150,7 @@ Plugin install:
 python3 "${CLAUDE_PLUGIN_ROOT}/agent-usage-guard.py" report
 ```
 
-The report stays on disk: counts by rule, asks vs denials vs fuse trips, overrides armed, and circuit-breaker arms. It never leaves the machine and never includes prompt text, tool inputs, errors, or model output. Set `AGENT_GUARD_EVENTS=0` to stop writing the journal; `report` still reads whatever was already recorded.
+The report stays on disk: counts by rule, by tool, and by coarse context bucket, plus asks vs denials vs fuse trips, overrides armed, and circuit-breaker arms. It never leaves the machine and never includes prompt text, tool inputs, errors, or model output. Set `AGENT_GUARD_EVENTS=0` to stop writing the journal; `report` still reads whatever was already recorded.
 
 ## Security and privacy
 
@@ -160,7 +160,7 @@ Claude Code hooks run locally with your user permissions, so inspect any hook be
 - It reads hook payloads and the documented transcript tail only to derive counters and token estimates.
 - It stores hashes, ids, timestamps, counters, and token estimates — never prompt text, tool inputs, errors, or model output. While an Agent permission is unresolved, its provisional record also stores the parent transcript path and byte offset so a manual denial can be reconciled; that record expires after five minutes by default.
 - Its state file lives at `$XDG_STATE_HOME/agent-usage-guard/state.json` (normally `~/.local/state/agent-usage-guard/state.json`).
-- Its intervention journal lives at `$XDG_STATE_HOME/agent-usage-guard/events.jsonl` (same directory). Entries are privacy-minimal and retained longer than enforcement state so `report` can show what the guard stopped on this machine.
+- Its intervention journal lives at `$XDG_STATE_HOME/agent-usage-guard/events.jsonl` (same directory). Entries are privacy-minimal and retained longer than enforcement state so `report` can show what the guard stopped on this machine. They may include the Claude tool name (`Bash`, `Agent`, …) and a coarse context bucket (`<150k`, `150-300k`, `300-400k`, `400-500k`, `>=500k`) — still never prompt text, tool inputs, errors, or model output.
 - State and journal writes use file locking where available and atomic replacement. If state cannot be read or written safely, state-dependent checks fail open. Journal write failures never change allow/deny behaviour.
 
 Set `AGENT_GUARD=0` to disable the guard without uninstalling it.
