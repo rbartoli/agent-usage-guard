@@ -1869,6 +1869,34 @@ def test_context_warning_hard_gate_recovery_override_and_postcompact() -> None:
         assert duplicate.returncode == 0
         assert duplicate.stdout == ""
 
+        # Successive turns in the same heavy session must not re-warn: the
+        # throttle is per session, not per request id.
+        later_transcript = root / "warning-later.jsonl"
+        write_transcript(
+            later_transcript,
+            NOW - 1,
+            350_000,
+            request_id="req-later",
+        )
+        later = invoke(
+            "prompt",
+            prompt_payload("keep going", "warning", later_transcript),
+            warning_state,
+        )
+        assert later.returncode == 0
+        assert later.stdout == ""
+
+        other_transcript = root / "warning-other.jsonl"
+        write_transcript(other_transcript, NOW - 1, 350_000)
+        other = invoke(
+            "prompt",
+            prompt_payload("continue", "other-session", other_transcript),
+            warning_state,
+        )
+        assert other.returncode == 0
+        assert "USAGE GUARD" in other.stdout
+        assert "350,000" in other.stdout
+
         hard_state = root / "hard-state.json"
         hard_transcript = root / "hard.jsonl"
         write_transcript(hard_transcript, NOW - 1, 600_000)
@@ -2007,18 +2035,64 @@ def test_high_context_turn_stops_after_tool_budget() -> None:
                 ).returncode
                 == 0
             )
-        blocked = invoke(
+        extra = tool_payload(
+            "high-2",
+            "Bash",
+            {"command": "echo 2"},
+            transcript=transcript,
+        )
+        blocked = invoke("pre-tool", extra, state, extra_env=env)
+        assert "high-context turn guard" in ask_reason(blocked)
+        decline(extra, state, extra_env=env)
+        second = invoke(
             "pre-tool",
             tool_payload(
-                "high-2",
+                "high-3",
                 "Bash",
-                {"command": "echo 2"},
+                {"command": "echo 3"},
                 transcript=transcript,
             ),
             state,
             extra_env=env,
         )
-        assert "high-context turn guard" in ask_reason(blocked)
+        assert "denial 2" in ask_reason(second)
+        assert "high-context turn guard" in ask_reason(second)
+        assert "this condition" in ask_reason(second)
+
+        bypass_state = root / "bypass.json"
+        bypass_transcript = root / "bypass.jsonl"
+        write_transcript(bypass_transcript, NOW - 1, 450_000)
+        for index in range(2):
+            payload = tool_payload(
+                f"bypass-{index}",
+                "Bash",
+                {"command": f"echo {index}"},
+                transcript=bypass_transcript,
+            )
+            payload["permission_mode"] = "bypassPermissions"
+            assert (
+                invoke("pre-tool", payload, bypass_state, extra_env=env).returncode == 0
+            )
+        first_deny = tool_payload(
+            "bypass-2",
+            "Bash",
+            {"command": "echo 2"},
+            transcript=bypass_transcript,
+        )
+        first_deny["permission_mode"] = "bypassPermissions"
+        denied = invoke("pre-tool", first_deny, bypass_state, extra_env=env)
+        assert "denial 1" in deny_reason(denied)
+        assert "high-context turn guard" in deny_reason(denied)
+        next_deny = tool_payload(
+            "bypass-3",
+            "Bash",
+            {"command": "echo 3"},
+            transcript=bypass_transcript,
+        )
+        next_deny["permission_mode"] = "bypassPermissions"
+        denied_again = invoke("pre-tool", next_deny, bypass_state, extra_env=env)
+        assert "denial 2" in deny_reason(denied_again)
+        assert "high-context turn guard" in deny_reason(denied_again)
 
 
 def test_research_expansion_is_bounded_and_duplicate_notice_is_suppressed() -> None:
@@ -2559,7 +2633,10 @@ def test_historical_resume_all_replay_allows_four_and_blocks_five() -> None:
             for index in range(9)
         ]
         assert codes.count("allow") == 4, codes
-        assert codes.count("ask") == 5, codes
+        # Five extras of different agents are the same active-agent condition,
+        # so the ladder climbs and the 5th extra trips the session fuse.
+        assert codes.count("ask") == 4, codes
+        assert codes.count("deny") == 1, codes
 
 
 def test_historical_recursive_research_shape_is_stopped_at_first_nesting() -> None:
@@ -2667,7 +2744,8 @@ def test_first_denial_names_alternatives_not_only_the_condition() -> None:
         first = blocked_agent_attempt(state, 1)
         lowered = refusal_reason(first).lower()
         assert "denial 1" in lowered
-        assert "identical retry" in lowered
+        assert "this condition" in lowered
+        assert "another call while the condition holds" in lowered
         assert "other work" in lowered
         second = blocked_agent_attempt(state, 2)
         assert refusal_reason(first) != refusal_reason(second)
@@ -2688,14 +2766,22 @@ def test_fuse_warning_reports_configured_subminute_duration_exactly() -> None:
         assert "for 1 minutes" not in refusal_reason(warning)
 
 
-def test_block_ladder_is_scoped_per_call_fingerprint() -> None:
+def test_condition_scoped_ladder_counts_a_different_agent_call() -> None:
+    """Session-level agent budgets count the ladder by condition, not input.
+
+    A refused 5th agent and a differently-described 5th are the same condition.
+    Tool-error fuse stays per-fingerprint; see
+    test_identical_tool_failure_fuse_warns_blocks_and_expires.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp) / "state.json"
         fill_active_slots(state)
-        blocked_agent_attempt(state, 1, description="First blocked call")
-        blocked_agent_attempt(state, 2, description="First blocked call")
-        other = blocked_agent_attempt(state, 3, description="Different call")
-        assert "denial 1" in refusal_reason(other)
+        first = blocked_agent_attempt(state, 1, description="Collector A")
+        assert "denial 1" in refusal_reason(first)
+        second = blocked_agent_attempt(state, 2, description="Collector B")
+        assert "denial 2" in refusal_reason(second)
+        assert "4 agents are already active" in refusal_reason(second)
+        assert "this condition" in refusal_reason(second)
 
 
 def test_agent_fuse_trips_blocks_session_scoped_and_expires() -> None:
@@ -5210,7 +5296,10 @@ def test_intervention_journal_records_deny_not_allow() -> None:
             "attempt",
             "fingerprint",
             "permission_mode",
+            "tool_name",
+            "context_bucket",
         }
+        assert "tool_name" not in rows[0]
         blob = json.dumps(rows[0])
         assert "resume all agents" not in blob
 
@@ -5229,6 +5318,17 @@ def test_intervention_journal_records_ask_and_can_be_disabled() -> None:
         assert "active-agent" in rows[0]["rule"]
         assert "fingerprint" in rows[0]
         assert rows[0]["attempt"] == 1
+        assert rows[0]["tool_name"] == "Agent"
+        assert rows[0]["context_bucket"] in {
+            "<150k",
+            "150-300k",
+            "300-400k",
+            "400-500k",
+            ">=500k",
+        }
+        blob = json.dumps(rows[0])
+        assert "Inspect the assigned area" not in blob
+        assert "Same blocked work" not in blob
 
         quiet = root / "quiet.json"
         quiet_events = events_path_for(quiet)
@@ -5328,6 +5428,9 @@ def test_intervention_journal_fail_open_and_report_summarises() -> None:
         assert "By rule:" in report.stdout
         assert "agent-burst guard" in report.stdout
         assert "active-agent" in report.stdout
+        assert "By tool:" in report.stdout
+        assert "Agent" in report.stdout
+        assert "By context:" in report.stdout
 
 
 def main() -> int:

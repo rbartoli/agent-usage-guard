@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.2.3 — 2026-08-15
+
+- Throttle high-context warnings per session, not per request id. Successive
+  turns in the same heavy session were each a new request, so the 10-minute
+  notice window never hit and the journal filled with repeats of the same warn.
+
+- Count the deny ladder by condition for session-level rules (high-context
+  turn, active/rolling/nested/agent-context), not by tool-input hash. A refused
+  5th agent then a different 5th is denial 2; a different Bash under a
+  high-context turn is too. Agent-budget silent-refusal inference matches a
+  stale pending reservation in the same session. Tool-error fuse stays
+  per-fingerprint. Ladder copy names "this condition" rather than "this exact
+  call" on those trips.
+
+- Record `tool_name` and a coarse `context_bucket` on journal interventions, and
+  summarise both in `report`. Still no prompt text or tool inputs.
+
 ## 0.2.2 — 2026-08-08
 
 - Stay out of agent CLIs that are not Claude Code. Cursor Agent imports the
