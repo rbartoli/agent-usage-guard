@@ -203,6 +203,12 @@ RECOVERY_COMMAND_PATTERN = re.compile(
     r"rate-limit-options)\b",
     re.IGNORECASE,
 )
+# Claude Code injects lowercase-kebab XML envelopes as UserPromptSubmit
+# text for events the user did not type, such as background-task completion.
+INJECTED_ENVELOPE_PATTERN = re.compile(
+    r"^\s*<[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\s|>)",
+)
+PROMPT_DENIAL_BANNER = "🛡️U USAGE GUARD"
 RESET_RELATIVE_PATTERN = re.compile(
     r"\bresets?\s+in\s+(\d+)\s*"
     r"(minutes?|mins?|m|hours?|hrs?|h)\b"
@@ -1194,6 +1200,17 @@ def is_recovery_command(prompt: str) -> bool:
     return bool(RECOVERY_COMMAND_PATTERN.search(prompt))
 
 
+def is_injected_envelope(prompt: str) -> bool:
+    """Report whether this prompt is a Claude Code envelope, not user text.
+
+    Background-task completions arrive as ``<task-notification>…`` on
+    UserPromptSubmit. Blocking them with the same copy as a typed prompt, and
+    echoing the XML back as "Original prompt", reads as a Claude Code error
+    rather than a guard decision.
+    """
+    return bool(INJECTED_ENVELOPE_PATTERN.match(prompt))
+
+
 def has_override_directive(prompt: str, marker: str) -> bool:
     """Require an intentional, standalone first-line override directive."""
 
@@ -1586,6 +1603,20 @@ def add_notice(
     return True
 
 
+def decorate_prompt_denial(message: str) -> str:
+    """Prefix a prompt block so it is not mistaken for a Claude Code hook error.
+
+    Claude Code wraps UserPromptSubmit denials as "operation blocked by hook".
+    Notices already open with ``USAGE GUARD:``; denials use the same brand
+    (with a shield so the block UI is not a generic hook error) on its own
+    line so :func:`rule_from_message` still reads the BLOCKED rule instead of
+    classifying the text as a notice.
+    """
+    if message.startswith(PROMPT_DENIAL_BANNER):
+        return message
+    return f"{PROMPT_DENIAL_BANNER}\n{message}"
+
+
 def block(message: str) -> int:
     print(message, file=sys.stderr)
     return 2
@@ -1603,11 +1634,17 @@ def block_prompt(message: str, *, rule: str = "", now: float | None = None) -> i
     inspects the status, so the document wins today; if that ever stops being
     true the status still denies the event and only the prefix comes back.
 
+    ``suppressOriginalPrompt`` drops Claude Code's "Original prompt:" dump from
+    the block message. That dump is how a ``<task-notification>`` envelope, or
+    the user's own text, was being echoed back as if it were a Claude Code
+    error.
+
     ``PreToolUse`` deliberately keeps the plain path for now. Its denials are
     equivalent under test - neither form emits ``PermissionDenied`` - but the
     two-phase reservation accounting has not been exercised against a decision
     document, so that move belongs in its own change.
     """
+    message = decorate_prompt_denial(message)
     record_intervention(
         decision="deny",
         rule=rule,
@@ -1616,7 +1653,11 @@ def block_prompt(message: str, *, rule: str = "", now: float | None = None) -> i
     )
     print(
         json.dumps(
-            {"decision": "block", "reason": message},
+            {
+                "decision": "block",
+                "reason": message,
+                "suppressOriginalPrompt": True,
+            },
             separators=(",", ":"),
         )
     )
@@ -1939,13 +1980,25 @@ def ladder_attempt(
     return 1 + matches
 
 
-def rate_limit_message(rate_limit: dict[str, Any]) -> str:
+def rate_limit_message(
+    rate_limit: dict[str, Any],
+    *,
+    envelope: bool = False,
+) -> str:
     until = float(rate_limit["until"])
     category = str(rate_limit.get("category") or "rate")
+    if envelope:
+        return (
+            "BLOCKED by agent-usage-guard's usage circuit breaker: a "
+            f"{category} limit is active until {format_until(until)}. "
+            "📬 A background task finished; Claude cannot pick it up until "
+            "the limit resets. Recovery commands "
+            "(/status, /model, /compact, /clear, /context, /usage) remain allowed."
+        )
     return (
         "BLOCKED by agent-usage-guard's usage circuit breaker: a "
         f"{category} limit is active until {format_until(until)}. "
-        "Do not retry agents or prompts before reset. Recovery commands "
+        "⏳ New work waits until then. Recovery commands "
         "(/status, /model, /compact, /clear, /context, /usage) remain allowed. "
         f"Use {USAGE_OVERRIDE_MARKER} only for a deliberate bypass, "
         f"{PLACEMENT_RULE}."
@@ -2067,7 +2120,13 @@ def prompt_guard(payload: dict[str, Any], now: float, window: int) -> int:
 
             rate_limit = active_rate_limit(state, now)
             if rate_limit and not recovery and not usage_bypass:
-                return block_prompt(rate_limit_message(rate_limit) + hint)
+                return block_prompt(
+                    rate_limit_message(
+                        rate_limit,
+                        envelope=is_injected_envelope(prompt),
+                    )
+                    + hint
+                )
 
             context = effective_context(state, sid, request)
             hard_context = env_int(

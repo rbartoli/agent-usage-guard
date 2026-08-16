@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.4 — 2026-08-16
+
+- Label prompt-side denials `🛡️U USAGE GUARD` and suppress Claude Code's "Original
+  prompt:" dump. A background-task `<task-notification>` under a session limit
+  was rendering as a generic hook error plus the XML envelope. Circuit-breaker
+  copy now says new work waits until reset (⏳), and names a finished
+  background task (📬) when that is what was blocked.
+
 ## 0.2.3 — 2026-08-15
 
 - Throttle high-context warnings per session, not per request id. Successive

@@ -1545,6 +1545,26 @@ def test_rate_limit_circuit_blocks_work_but_allows_recovery_and_expires() -> Non
         )
         assert blocked_prompt.returncode == 2
         assert "circuit breaker" in blocked_prompt.stderr
+        assert blocked_prompt.stderr.startswith("🛡️U USAGE GUARD\n")
+        assert "New work waits until then" in blocked_prompt.stderr
+        assert json.loads(blocked_prompt.stdout)["suppressOriginalPrompt"] is True
+
+        notification = (
+            "<task-notification>\n"
+            "<task-id>bgxvongxz</task-id>\n"
+            "<status>completed</status>\n"
+            "<summary>Background command completed (exit code 0)</summary>\n"
+            "</task-notification>"
+        )
+        blocked_envelope = invoke("prompt", prompt_payload(notification), state)
+        assert blocked_envelope.returncode == 2
+        assert "circuit breaker" in blocked_envelope.stderr
+        assert "background task finished" in blocked_envelope.stderr.lower()
+        assert notification not in blocked_envelope.stderr
+        assert json.loads(blocked_envelope.stdout)["suppressOriginalPrompt"] is True
+        assert json.loads(blocked_envelope.stdout)["reason"].startswith(
+            "🛡️U USAGE GUARD\n"
+        )
         blocked_agent = invoke(
             "pre-tool",
             agent_payload("rate-limited-agent"),
@@ -4561,7 +4581,9 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert blocked.returncode == 2
         decision = json.loads(blocked.stdout)
         assert decision["decision"] == "block"
-        assert decision["reason"].startswith("BLOCKED by agent-usage-guard")
+        assert decision["reason"].startswith("🛡️U USAGE GUARD\n")
+        assert "BLOCKED by agent-usage-guard" in decision["reason"]
+        assert decision["suppressOriginalPrompt"] is True
         assert decision["reason"] == blocked.stderr.strip()
 
         expansion_state = Path(tmp) / "expansion.json"
@@ -4579,7 +4601,9 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert expansion.returncode == 2
         expansion_decision = json.loads(expansion.stdout)
         assert expansion_decision["decision"] == "block"
+        assert expansion_decision["reason"].startswith("🛡️U USAGE GUARD\n")
         assert "opaque Workflow" in expansion_decision["reason"]
+        assert expansion_decision["suppressOriginalPrompt"] is True
         assert expansion_decision["reason"] == expansion.stderr.strip()
 
 
