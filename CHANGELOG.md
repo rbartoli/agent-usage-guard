@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.5 — 2026-08-16
+
+- Drop the stray `U` from the prompt-denial banner. 0.2.4 rendered
+  `🛡️U USAGE GUARD`; it is `🛡️USAGE GUARD`.
+
 ## 0.2.4 — 2026-08-16
 
 - Label prompt-side denials `🛡️U USAGE GUARD` and suppress Claude Code's "Original

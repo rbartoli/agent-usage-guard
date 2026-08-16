@@ -1545,7 +1545,7 @@ def test_rate_limit_circuit_blocks_work_but_allows_recovery_and_expires() -> Non
         )
         assert blocked_prompt.returncode == 2
         assert "circuit breaker" in blocked_prompt.stderr
-        assert blocked_prompt.stderr.startswith("🛡️U USAGE GUARD\n")
+        assert blocked_prompt.stderr.startswith("🛡️USAGE GUARD\n")
         assert "New work waits until then" in blocked_prompt.stderr
         assert json.loads(blocked_prompt.stdout)["suppressOriginalPrompt"] is True
 
@@ -1563,7 +1563,7 @@ def test_rate_limit_circuit_blocks_work_but_allows_recovery_and_expires() -> Non
         assert notification not in blocked_envelope.stderr
         assert json.loads(blocked_envelope.stdout)["suppressOriginalPrompt"] is True
         assert json.loads(blocked_envelope.stdout)["reason"].startswith(
-            "🛡️U USAGE GUARD\n"
+            "🛡️USAGE GUARD\n"
         )
         blocked_agent = invoke(
             "pre-tool",
@@ -4581,7 +4581,7 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert blocked.returncode == 2
         decision = json.loads(blocked.stdout)
         assert decision["decision"] == "block"
-        assert decision["reason"].startswith("🛡️U USAGE GUARD\n")
+        assert decision["reason"].startswith("🛡️USAGE GUARD\n")
         assert "BLOCKED by agent-usage-guard" in decision["reason"]
         assert decision["suppressOriginalPrompt"] is True
         assert decision["reason"] == blocked.stderr.strip()
@@ -4601,7 +4601,7 @@ def test_prompt_denials_carry_an_unprefixed_json_reason() -> None:
         assert expansion.returncode == 2
         expansion_decision = json.loads(expansion.stdout)
         assert expansion_decision["decision"] == "block"
-        assert expansion_decision["reason"].startswith("🛡️U USAGE GUARD\n")
+        assert expansion_decision["reason"].startswith("🛡️USAGE GUARD\n")
         assert "opaque Workflow" in expansion_decision["reason"]
         assert expansion_decision["suppressOriginalPrompt"] is True
         assert expansion_decision["reason"] == expansion.stderr.strip()

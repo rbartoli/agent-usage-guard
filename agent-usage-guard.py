@@ -208,7 +208,7 @@ RECOVERY_COMMAND_PATTERN = re.compile(
 INJECTED_ENVELOPE_PATTERN = re.compile(
     r"^\s*<[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\s|>)",
 )
-PROMPT_DENIAL_BANNER = "🛡️U USAGE GUARD"
+PROMPT_DENIAL_BANNER = "🛡️USAGE GUARD"
 RESET_RELATIVE_PATTERN = re.compile(
     r"\bresets?\s+in\s+(\d+)\s*"
     r"(minutes?|mins?|m|hours?|hrs?|h)\b"
