@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+## 1.0.0 — 2026-10-07
+
+Rebuilt as a Claude Code mod (Claude Code v2.1.287 or later). The Python command
+hooks are gone: the guard now runs inside Claude Code, as a harness-agnostic core
+(`core/`) behind a Claude Code adapter (`hooks/register.ts`). A full review of
+0.2.5 against Claude Code 2.1.292 found that hooks could only approximate what
+mods expose directly: live context, plan-window percentages, and a refusable
+event before every agent starts.
+
+- **Plan-aware agent gates.** New agents ask from 80% of a plan window and are
+  refused from 95%, and ask when the 5-hour window rises 20 points in ten
+  minutes. This is the lever the 2026-08-08 incident lacked: 0.2.5 reacted only
+  after a usage limit had already been hit.
+- **Every agent path is gated before it starts.** `agent.spawn` covers
+  subagents, teammates and workflow agents, so Workflow and `/deep-research` no
+  longer need a blanket gate. Resuming a finished subagent with `SendMessage` is
+  gated and counted. `/subtask` forks are counted when they start.
+- **Questions instead of hard blocks.** When a person can answer, a gate asks in
+  Claude Code's own question dialog. An approval lasts until its condition
+  clears, which ends the approval fatigue of 0.2.5 (132 of 136 high-context asks
+  approved, often one per tool call). Without a person (`claude -p`, the SDK,
+  `dontAsk`), gates refuse as before.
+- **Subagents are judged on their own context.** 0.2.5 read the main
+  transcript for a subagent's tool calls, so subagents inherited the parent's
+  context and tool budget and could have their report hand-back refused.
+- **Approvals are seen, not inferred.** 0.2.5 read an approved dialog back as a
+  refusal when the identical call came again, and escalated the denial ladder.
+  The mod gets the answer from the dialog.
+- **Prompts are no longer held after a usage limit.** Claude Code has waited at
+  a limit and resumed at reset since v2.1.234. The 0.2.5 circuit breaker made
+  232 refusals that saved nothing, swallowed 31 background-task notifications,
+  and kept blocking for 14 minutes after a limit lifted early. Lockouts are
+  still journaled; they are the guard's outcome metric.
+- **Heavy prompts offer to compact first.** At 500k context a prompt asks:
+  compact then send (the prompt is resent as your own words), send anyway, or
+  cancel (the prompt goes back in the input box). Dormant heavy sessions ask the
+  same way.
+- **`/usage-guard` replaces the bracket markers.** It runs without a model turn,
+  so the model never reads an override. The old markers sent alone still work.
+- **A Stop hook that reopens the turn changes the wording.** All 37 identical
+  retries after a denial in 0.2.5's journal followed `/goal` reopening a turn the
+  guard had asked to end; refusals now hand that decision to the user.
+- **No per-call cost.** The hooks run in-process; 0.2.5 started a Python process
+  per tool call, at 110–160 ms each.
+- **Removed:** the research gate and the broad-resume prompt patterns, which
+  stood in for "a swarm is about to start" and are superseded by per-agent
+  gating; the circuit breaker's prompt blocking and its reset-time parsing; the
+  state file under `$XDG_STATE_HOME`; the manual settings-hooks install.
+- **Changed configuration:** thresholds stay environment variables;
+  `AGENT_GUARD_CONTEXT_MAX` is now `AGENT_GUARD_AGENT_TOKENS_MAX`,
+  `AGENT_GUARD_HIGH_CONTEXT_TOKENS` is `AGENT_GUARD_DORMANT_CONTEXT`, and the
+  block-fuse variables are `AGENT_GUARD_FUSE_MAX` and `AGENT_GUARD_FUSE_SECONDS`.
+  New: `AGENT_GUARD_LIMIT_ASK_PERCENT`, `AGENT_GUARD_LIMIT_DENY_PERCENT`,
+  `AGENT_GUARD_BURN_PERCENT`, `AGENT_GUARD_DEPTH_MAX`,
+  `AGENT_GUARD_PEER_TTL_SECONDS`, `AGENT_GUARD_JOURNAL`,
+  `AGENT_GUARD_JOURNAL_DAYS`. Gone with the state file and the circuit breaker:
+  `AGENT_GUARD_STATE`, the `AGENT_GUARD_EVENTS*` variables,
+  `AGENT_GUARD_PENDING_SECONDS`, `AGENT_GUARD_LEASE_SECONDS`,
+  `AGENT_GUARD_KNOWN_AGENT_SECONDS`, `AGENT_GUARD_RESEARCH_CONTEXT`,
+  `AGENT_GUARD_RATE_COOLDOWN_SECONDS`, `AGENT_GUARD_SESSION_COOLDOWN_SECONDS`,
+  `AGENT_GUARD_MAX_EFFORT_AGE` and `AGENT_GUARD_NOW`.
+- **Robust under parallel calls.** Calls that trip while a question is open
+  are held back at once instead of waiting on it, so no hook outlives its
+  10-second limit; an agent the guard could not judge in time is refused, not
+  started. The retry fuse counts identical failures only when nothing else ran
+  in between, so test, edit, re-run is never a loop. `/usage-guard resume` and
+  `allow` lift the agent pause. The journal stays under 2 MB of the store, and
+  a subagent's permission mode no longer decides whether the guard can ask.
+- Tests run in Claude Code's mod test kit (`claude plugin test`), including a
+  parallel batch of five agents against a limit of four, a race the first draft
+  of the mod got wrong.
+
 ## 0.2.5 — 2026-08-16
 
 - Drop the stray `U` from the prompt-denial banner. 0.2.4 rendered

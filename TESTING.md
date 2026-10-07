@@ -1,72 +1,55 @@
-# Testing strategy
+# Testing
 
-The suite is deliberately behavior-first. The guard is executed as a real hook
-process with JSON on stdin, its documented environment variables, a real
-temporary transcript, and a real locked/atomic state file. Tests assert public
-outcomes—exit status, model-visible stderr or hook output, and privacy-minimal
-persisted state—rather than mocking implementation functions.
+The suite runs inside Claude Code's own mod test kit (`claude plugin test`):
+no session, sign-in, model or network. Tests assert what a user or the model
+would see (verdicts, question text, held prompts, journal rows), not internal
+calls.
 
-## Quality gates
-
-Run the dependency-free regression suite:
+## Gates
 
 ```sh
-python3 agent-usage-guard.test.py
+claude plugin validate . --strict   # manifest, hooks module, static analysis
+claude plugin test                  # every tests/*.test.ts
 ```
 
-Run the same suite with branch-aware subprocess coverage:
+CI runs both on GitHub-hosted runners against the pinned Claude Code version in
+`.github/workflows/test.yml`. Type-checking needs the declarations Claude Code
+writes when it loads the mod with `--plugin-dir`, so it runs locally:
 
 ```sh
-python3 -m pip install coverage==7.10.6
-coverage run agent-usage-guard.test.py
-coverage combine --quiet
-coverage report --include='*/agent-usage-guard.py,*/demo/run_demo.py'
+claude -p "/usage-guard" --plugin-dir .   # writes .claude-plugin/types/
+npx -p typescript@5.9 tsc -p tsconfig.json
 ```
 
-Check that the highest-risk tests reject deliberately weakened guard behavior:
+## Layers
 
-```sh
-python3 mutation-smoke.py
-```
+- **Core unit tests** (`tests/core.test.ts`) call the harness-agnostic core
+  directly with plain data: config parsing, command parsing, the denial
+  ladder, plan-window selection, peer records, fingerprints, and the report.
+- **Mod tests** (every other file) load the real hooks module and fire Claude
+  Code events through it (`agent.spawn`, `tool.call`, `prompt.submit`,
+  `turn.step`, `session.measure`, classic hook events). `tests/harness.ts`
+  stubs every mods API call the module makes: an in-memory store, a mock
+  clock, a question dialog that answers from a script, and recorders for
+  status lines, compactions and resubmitted prompts.
 
-CI also compiles every shipped Python file, runs Ruff lint and format checks,
-validates every JSON manifest, validates the Claude plugin contract, runs all
-148 tests on Python 3.9–3.14, and rejects branch-aware runtime coverage below
-90%. The Python 3.14 job also requires all seven targeted mutants to be killed.
-Coverage is a backstop, not the test-design target: platform-impossible
-fallbacks and defensive malformed-data branches are less important than a
-scenario that proves a user-visible invariant. Measured branch coverage on
-the shipped modules is about 90%; the gate stays at 90%. Chasing 100% branch
-coverage is rejected — it fights this residual-risk policy for little product
-value.
+## What the tests prove
 
-## Feature-to-test matrix
-
-| Surface | Functional and behavioral evidence |
+| Surface | Evidence |
 |---|---|
-| Rate/spend/session circuit breaker | Official and legacy `StopFailure` fields; relative, 12-hour, 24-hour, weekday, compound, timezone, invalid-clock fallback, model-scoped Opus limits, category-specific cooldowns, non-shortening cooldowns, expiry, recovery commands, and deliberate override |
-| Agent concurrency and rolling budgets | New starts and stopped-agent resumes, permission-safe pending reservations, `PostToolUse` confirmation, `PermissionDenied` and transcript-denial rollback, active leases, completed-history budgets, custom TTLs, nested-agent denial, agent-context ceiling, dormant heavy sessions, aliases, duplicate hooks, out-of-order lifecycle events, and atomic parallel calls |
-| Context and tool budgets | Latest real request extraction, `Stop` observation, warning and hard gates, high-context rolling tool counts, compaction boundaries, parent/subagent isolation, recovery commands, and deliberate override — including the dormant-resume cap, which takes the usage marker and not the agent one |
-| Workflow and research gates | Every current Workflow input shape, default-deny `/deep-research`, explicit bypass, high context, max effort in all known payload/transcript shapes, near-exhausted rolling budget, duplicate-notice suppression, and active usage circuit breaker |
-| Repeated-failure fuse | Identical versus changed inputs, duplicate tool IDs, interruption semantics, agent-slot rollback, session isolation, warning threshold, retry blocking, and window expiry |
-| Denial escalation and agent fuse | Per-fingerprint attempt counting, byte-distinct messages, exact configured durations, non-agent behavior, session scoping, override, and cooldown expiry |
-| State, privacy, and crash safety | Corrupt and legacy state migration, malformed/deep/oversized transcripts, missing fields and unknown modes, invalid environment values, unavailable state paths, bounded retention, no prompt/tool/error/output persistence, file locking, and concurrent updates |
-| Hook/plugin integration | Runtime dispatch for all 11 modes, exact matchers in both shipped manifests, marketplace metadata, JSON validation, and strict Claude plugin validation |
-| Local intervention journal and report | Deny/ask/notice/override/circuit records, allow paths write nothing, disable toggle, fail-open journal I/O, privacy-minimal schema, and `report` empty/populated summaries |
-| Demo and visual artifact | Real launcher invocation against a disposable fixture, exact CLI/environment safety contract, missing-CLI error, cache-file exclusion, GIF structure/dimensions/animation, reviewed golden SHA-256 snapshot, README accessibility text, and reproducible VHS success marker |
+| Agent limits | Concurrency, rolling starts and subagent tokens; a finished agent frees its slot; peers' counts add up and stale records expire; a parallel batch of five lets exactly four through; nesting refused; resumes by `SendMessage` gated and counted; `/subtask` forks counted, internal agents not |
+| Plan windows | Refused from 95%, asked once from 80% with the approval lasting to reset; weekly window; expired windows ignored; burn rate; threshold crossings journaled once |
+| Questions | Approval leases the condition; declining refuses without asking again; typed answers reach the model; calls made while a question is open are held back without waiting, and run once it is answered |
+| Tool gate | Retry fuse on identical failures in a row only, so test, edit, re-run is not a loop; a permission refusal is not a failure; the heavy-context budget asks once, stops the turn, or compacts after it; subagents judged on their own context; `SubagentHandback` and `TaskStop` never held; compaction clears the budget |
+| Prompt gate | Heavy prompt asks, compacts then resends as the user's own words, or cancels back into the input box; headless holds with a reason; notifications pass; dormant resumes ask or are capped across sessions; the context warning is given once |
+| Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
+| Overrides | `/usage-guard allow`, `resume`, the old markers sent alone, and the off switch |
+| Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
 
-## Test layers
+## What is checked by hand
 
-- Most tests are subprocess integration tests because process boundaries,
-  environment handling, stdin/stdout/stderr, exit codes, locking, and state
-  persistence are part of the product contract.
-- Concurrency tests invoke independent hook processes against one state file;
-  they verify the actual lock and atomic-update behavior.
-- Focused structural checks are used only where no runtime UI exists: manifests
-  and the recorded terminal GIF.
-- The GIF hash is a golden visual regression snapshot. An intentional recording
-  update must be viewed, accepted, and accompanied by updating the hash.
-
-The project has no browser or application UI. Its only visual surface is the
-documented terminal recording; runtime hook behavior is text/JSON and is tested
-functionally instead of with screenshot machinery.
+On Claude Code 2.1.292, the question dialog, the status line and
+`/usage-guard` were exercised in a real interactive session of this mod, and
+the compact-then-send flow (drop, compact from a timer, resend as the user) in
+a probe mod built on the same calls. The demo recording in `demo/` reproduces
+the main path against the real UI and uses a little usage.
