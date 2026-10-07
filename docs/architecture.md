@@ -18,6 +18,8 @@ core/                    harness-agnostic: no I/O, no clock, no dependencies
   lockout.ts             which failures were usage-limit lockouts
   journal.ts             journal rows, retention and the report
   status.ts, commands.ts what the user sees, and /usage-guard
+  text.ts                formatting, fingerprints
+  index.ts               the core's public entry point
 hooks/register.ts        the Claude Code adapter: the only file that calls the mods API
 ```
 
@@ -52,7 +54,7 @@ handler for each is named in brackets.
 | A tool finished | `observeToolResult(state, now, fingerprint, failed)` | `tool.call` after `next` |
 | A prompt is about to be sent | `promptGate(...)` | `prompt.submit` |
 | A request failed | `lockoutKind(error, text, readings)` | `classic.StopFailure` |
-| The conversation compacted | `observeCompaction(state)` | `classic.PostCompact` |
+| The conversation compacted | `observeCompaction(state)` | `classic.PostCompact`, `classic.SessionStart` with source `compact` |
 
 A verdict is one of:
 
@@ -60,8 +62,10 @@ A verdict is one of:
 - `deny`, with a `message` for the model, already worded by the ladder;
 - `drop`, with a `message` for the user, for a prompt that is not sent;
 - `ask`, with a question and options. The adapter puts the question to the
-  person and hands the answer to `resolveAgentAsk`, `resolveHeavyAsk` or
-  `resolvePromptAsk`, which return the final verdict. A harness with nobody to
+  person and hands the answer to `resolveAgentAsk` (a verdict),
+  `resolveHeavyAsk` (a verdict, plus whether to compact after the turn) or
+  `resolvePromptAsk` (a verdict, or `compact-then-send`), and carries out what
+  comes back. A harness with nobody to
   ask sets `state.canAsk = false`, and the core then refuses instead of asking.
 
 Two duties fall on every adapter, because only it knows the harness:

@@ -55,23 +55,25 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | Tool calls per 10 minutes while a conversation or agent carries this much | 20 calls at 400k | asks: keep going, compact after this turn, or stop |
 | | A heavy session idle long enough for its prompt cache to expire | 150k tokens, 1 h idle | asks before re-writing the cache |
 | Loops | The same tool call failing again and again | 3 identical failures | refuses the identical retry |
-| | Refused agent calls in a row | 5 in 10 min | pauses agent spawns for 10 min |
+| | Refused agent calls within 10 minutes | 5 | pauses agent spawns for 10 min |
 
 Agents covers subagents, agent-team teammates, workflow agents, and finished subagents resumed with `SendMessage`. Each tool call is judged on the context of the loop that makes it, so a small subagent never inherits the main conversation's size.
 
-**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel share one question. If you allow it, the condition stays allowed until it clears: for a plan window, until the window resets. If you decline or dismiss the question, Claude is told not to start agents for the rest of the window, and is not asked again. Typed words reach Claude, so you can answer "use haiku agents instead".
+**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel share one question. If you allow it, the condition stays allowed until it clears: for a plan window, until the window resets. If you decline or dismiss the question, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
 
-**When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A prompt gate holds the prompt and says why. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
+**When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
 
 **What it leaves alone.** It never holds a background task's notification or another session's message, because that would lose the result. It no longer blocks prompts after a usage limit: since v2.1.234, Claude Code waits at a limit and continues at reset on its own (`autoContinueAtUsageLimit`). The guard's job is to keep you from reaching the limit, and its journal counts the lockouts it did not prevent.
 
 ## Commands
 
 ```text
-/usage-guard                                   what the guard sees right now
+/usage-guard [status]                          what the guard sees right now
 /usage-guard allow [agents|context] [minutes]  lift its limits for this session (default: all, 10 min)
+/usage-guard pause [minutes]                   the same as allow, for every limit
 /usage-guard resume                            end an allow early, and let declined questions ask again
 /usage-guard report [days]                     what it did on this machine (default: 7 days)
+/usage-guard help                              these commands
 ```
 
 `/usage-guard` runs at once, even mid-turn, and never starts a model turn, so Claude never sees an override and cannot take one as permission. Sending `[allow-usage-guard]` or `[allow-agent-burst]` alone as a prompt, the markers of earlier versions, does the same as `/usage-guard allow` or `allow agents`.
@@ -84,7 +86,7 @@ Checked against Claude Code v2.1.292:
 |---|---|
 | Subagents, teammates and workflow agents | Held before they start (`agent.spawn`) |
 | A finished subagent sent new work with `SendMessage` | Held before it resumes, and counted as a start |
-| `/subtask` and forked skills | Counted when they start, never held: you start them, and Claude Code offers no event before they do |
+| `/subtask` forks, and anything else that starts without `agent.spawn` | Counted when they start, never held: Claude Code offers no event before they do. Forks Claude starts through the Agent tool are held like any agent |
 | Claude Code's internal agents (prompt suggestions, compaction) | Not counted |
 | Plan-window percentages | From the last API response, on a subscription. API-key sessions report none, so only the token and count budgets apply |
 | Teammates running in their own terminal panes | Not visible: their loops run in other processes |
@@ -108,7 +110,7 @@ The report counts usage-limit lockouts per week, plan-window threshold crossings
 A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is small enough to audit, and `claude plugin validate .` lists every API it calls:
 
 - It makes no network requests and starts no processes.
-- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts, token totals, its latest 5-hour reading) and its journal rows (rule, tool name, context bucket such as `400-500k`, plan percentage, and your answer).
+- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, token totals, its latest 5-hour reading) and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
 - Journal days older than 90 days are deleted (`AGENT_GUARD_JOURNAL_DAYS`).
 
@@ -120,7 +122,7 @@ Set these as environment variables, or under `env` in `~/.claude/settings.json`.
 
 | Variable | Meaning (default) |
 |---|---|
-| `AGENT_GUARD` | `0`, `false` or `off` turns the guard off (`1`) |
+| `AGENT_GUARD` | `0`, `false`, `off` or `no` turns the guard off (`1`) |
 | `AGENT_GUARD_JOURNAL` | `0` stops the journal (`1`) |
 | `AGENT_GUARD_JOURNAL_DAYS` | Days of journal kept (`90`) |
 | `AGENT_GUARD_WINDOW_SECONDS` | Rolling window for budgets, burn and refusals (`600`) |

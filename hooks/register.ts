@@ -101,7 +101,7 @@ export function register(on: On): void {
       await $.command.register({
         name: COMMAND,
         description: 'agent-usage-guard: status, allow, resume, report',
-        argumentHint: '[status | allow [agents|context] [minutes] | resume | report [days]]',
+        argumentHint: '[status | allow [agents|context] [minutes] | pause [minutes] | resume | report [days] | help]',
         immediate: true,
       })
     } catch (error) {
@@ -200,17 +200,22 @@ export function register(on: On): void {
 
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
-    if (config.enabled && result.usage) {
-      const now = await $.clock.now()
-      const loop = e.agentId ?? MAIN
-      if (loop === MAIN && stopSeen) session.reopened = true
-      observeResponse(session, config, now, loop, {
-        input: result.usage.input_tokens,
-        output: result.usage.output_tokens,
-        cacheRead: result.usage.cache_read_input_tokens,
-        cacheWrite: result.usage.cache_creation_input_tokens,
-      })
-      if (now - lastPublished >= HEARTBEAT_MS) await publish($, now)
+    // A streaming hook fails open by hand: recording a response must never fail the request.
+    try {
+      if (config.enabled && result.usage) {
+        const now = await $.clock.now()
+        const loop = e.agentId ?? MAIN
+        if (loop === MAIN && stopSeen) session.reopened = true
+        observeResponse(session, config, now, loop, {
+          input: result.usage.input_tokens,
+          output: result.usage.output_tokens,
+          cacheRead: result.usage.cache_read_input_tokens,
+          cacheWrite: result.usage.cache_creation_input_tokens,
+        })
+        if (now - lastPublished >= HEARTBEAT_MS) await publish($, now)
+      }
+    } catch (error) {
+      $.ui.log(`agent-usage-guard: could not record a response (${String(error)})`, { to: 'debug' })
     }
     return result
   })
