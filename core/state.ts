@@ -69,8 +69,8 @@ export type SessionState = {
   refusals: Record<string, number>
   denials: Denial[]
   fuseUntil?: number
-  /** Consecutive identical failures per tool-call fingerprint. */
-  failures: Record<string, { count: number; last: number }>
+  /** Consecutive identical failures per tool-call fingerprint, and the loop that made them. */
+  failures: Record<string, { count: number; last: number; loop: LoopId }>
   override?: { until: number; scope: Scope }
   /** The context warning was given and still applies. */
   warned: boolean

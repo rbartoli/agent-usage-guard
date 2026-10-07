@@ -54,6 +54,7 @@ export function applyOverride(state: SessionState, now: number, scope: Scope, mi
   if (scope !== 'context') {
     delete state.fuseUntil
     delete state.refusals.agents
+    state.denials = state.denials.filter((d) => !d.agent)
   }
   if (scope !== 'agents') {
     for (const loop of Object.values(state.loops)) loop.stopped = false
@@ -67,6 +68,8 @@ export function resumeGuard(state: SessionState): string {
   const had = state.override !== undefined
   delete state.override
   state.refusals = {}
+  delete state.fuseUntil
+  state.denials = state.denials.filter((d) => !d.agent)
   loopOf(state, 'main').stopped = false
   return had
     ? 'Limits apply again.'

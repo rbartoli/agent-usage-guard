@@ -4,7 +4,7 @@
 import type { Config } from './config.ts'
 import { type LimitReading, type LoopId, type PeerRecord, type SessionState, overrideCovers, runningAgents, within } from './state.ts'
 import { count, duration, shortClock, tokens, windowName } from './text.ts'
-import { ALLOW, type Ask, type Deny, type Trip, type Verdict, join, refuse, sentence } from './verdict.ts'
+import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, join, refuse, sentence } from './verdict.ts'
 
 export type AgentRequest = {
   /** The loop asking for the agent. */
@@ -89,6 +89,20 @@ export function resolveAgentAsk(
         : `The user answered "${answer}" instead of allowing it`
   const base = `This agent was not started: ${details}. ${said}. Continue without starting agents unless the user says otherwise.`
   return refuse(state, config, now, ask.trips[0]!.rule, `agents:${ask.trips[0]!.rule}`, base, true)
+}
+
+/**
+ * Holds back a call that tripped while the user is already being asked the
+ * same question. It does not wait for the answer, which could outlast the
+ * hook's time limit, and it is not a refusal of the condition: no ladder rung,
+ * no fuse.
+ */
+export function heldForQuestion(subject: 'agents' | 'heavy'): Deny {
+  const message =
+    subject === 'agents'
+      ? 'The user is being asked about starting agents. Wait for that answer, then start this agent again.'
+      : 'The user is being asked whether to keep working at this context size. Wait for that answer, then make this call again.'
+  return { kind: 'deny', rule: 'asking', message: `${message} [${SIGNATURE}]` }
 }
 
 function agentTrips(

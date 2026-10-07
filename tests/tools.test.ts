@@ -15,6 +15,16 @@ describe('retry fuse', () => {
     expect(w.ran.filter((t) => t === 'Bash')).toHaveLength(4)
   })
 
+  test('test, edit, re-run is not a retry loop: any other call in between resets the count', async ($, on) => {
+    const w = world(on, { toolResult: (e) => (e.tool === 'Bash' ? { result: 'failed', isError: true } : { result: 'ok' }) })
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) {
+      expect((await $.tool.call(bash('npm test'))).isError).toBe(true)
+      await $.tool.call({ tool: 'Edit', file_path: '/src/a.ts', old_string: `v${i}`, new_string: `v${i + 1}` } as never)
+    }
+    expect(w.ran.filter((t) => t === 'Bash')).toHaveLength(4)
+  })
+
   test('a success in between resets the count', async ($, on) => {
     let fail = true
     const w = world(on, { toolResult: () => (fail ? { result: 'failed', isError: true } : { result: 'ok' }) })

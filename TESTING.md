@@ -39,10 +39,10 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 |---|---|
 | Agent limits | Concurrency, rolling starts and subagent tokens; a finished agent frees its slot; peers' counts add up and stale records expire; a parallel batch of five lets exactly four through; nesting refused; resumes by `SendMessage` gated and counted; `/subtask` forks counted, internal agents not |
 | Plan windows | Refused from 95%, asked once from 80% with the approval lasting to reset; weekly window; expired windows ignored; burn rate; threshold crossings journaled once |
-| Questions | Approval leases the condition; declining refuses without asking again; typed answers reach the model; parallel calls share one question |
-| Tool gate | Retry fuse on identical failures only; a permission refusal is not a failure; the heavy-context budget asks once, stops the turn, or compacts after it; subagents judged on their own context; `SubagentHandback` and `TaskStop` never held; compaction clears the budget |
+| Questions | Approval leases the condition; declining refuses without asking again; typed answers reach the model; calls made while a question is open are held back without waiting, and run once it is answered |
+| Tool gate | Retry fuse on identical failures in a row only, so test, edit, re-run is not a loop; a permission refusal is not a failure; the heavy-context budget asks once, stops the turn, or compacts after it; subagents judged on their own context; `SubagentHandback` and `TaskStop` never held; compaction clears the budget |
 | Prompt gate | Heavy prompt asks, compacts then resends as the user's own words, or cancels back into the input box; headless holds with a reason; notifications pass; dormant resumes ask or are capped across sessions; the context warning is given once |
-| Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears; a Stop hook reopening the turn changes the wording |
+| Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
 | Overrides | `/usage-guard allow`, `resume`, the old markers sent alone, and the off switch |
 | Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
 

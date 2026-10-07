@@ -63,6 +63,13 @@ event before every agent starts.
   `AGENT_GUARD_KNOWN_AGENT_SECONDS`, `AGENT_GUARD_RESEARCH_CONTEXT`,
   `AGENT_GUARD_RATE_COOLDOWN_SECONDS`, `AGENT_GUARD_SESSION_COOLDOWN_SECONDS`,
   `AGENT_GUARD_MAX_EFFORT_AGE` and `AGENT_GUARD_NOW`.
+- **Robust under parallel calls.** Calls that trip while a question is open
+  are held back at once instead of waiting on it, so no hook outlives its
+  10-second limit; an agent the guard could not judge in time is refused, not
+  started. The retry fuse counts identical failures only when nothing else ran
+  in between, so test, edit, re-run is never a loop. `/usage-guard resume` and
+  `allow` lift the agent pause. The journal stays under 2 MB of the store, and
+  a subagent's permission mode no longer decides whether the guard can ask.
 - Tests run in Claude Code's mod test kit (`claude plugin test`), including a
   parallel batch of five agents against a limit of four, a race the first draft
   of the mod got wrong.

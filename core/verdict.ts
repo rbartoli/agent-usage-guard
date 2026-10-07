@@ -16,6 +16,8 @@ export type Rule =
   | 'agent-tokens'
   | 'burn'
   | 'limit'
+  // A question about it is already open.
+  | 'asking'
   // Tool calls.
   | 'retry'
   | 'stopped'

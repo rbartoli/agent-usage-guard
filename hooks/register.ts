@@ -25,6 +25,7 @@ import {
   defaultConfig,
   expireAgents,
   expiredJournalKeys,
+  heldForQuestion,
   fingerprint,
   formatReport,
   helpText,
@@ -68,6 +69,8 @@ const PEER_PREFIX = 'peer:'
 const HEARTBEAT_MS = 60_000
 /** Keeps one session's day of journal rows well inside the store's 4 MiB. */
 const MAX_ROWS_PER_DAY = 2000
+/** All journal days together stay below half the store, oldest dropped first. */
+const JOURNAL_BUDGET_BYTES = 2_000_000
 /** A peer record nobody refreshed for a day is from a session that is gone. */
 const STALE_PEER_MS = 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
@@ -88,7 +91,7 @@ let compactAfterTurn = false
 /** A Stop event happened and no prompt has started a new turn since. */
 let stopSeen = false
 let journalCache: { key: string; rows: JournalRow[] } | undefined
-/** One question per family at a time: parallel calls wait for its answer. */
+/** One question per family at a time: calls that trip while it is open are held back. */
 const pending = new Map<string, Promise<unknown>>()
 
 export function register(on: On): void {
@@ -118,12 +121,12 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.SessionStart', next.error, () => next(e)))
 
   on('classic.UserPromptSubmit', async ($, e, next) => {
-    trackMode(e.permission_mode)
+    trackMode(e.permission_mode, e.agent_id)
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.UserPromptSubmit', next.error, () => next(e)))
 
   on('classic.PostToolUse', async ($, e, next) => {
-    trackMode(e.permission_mode)
+    trackMode(e.permission_mode, e.agent_id)
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.PostToolUse', next.error, () => next(e)))
 
@@ -134,7 +137,7 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.PostCompact', next.error, () => next(e)))
 
   on('classic.Stop', async ($, e, next) => {
-    trackMode(e.permission_mode)
+    trackMode(e.permission_mode, e.agent_id)
     stopSeen = true
     if (e.stop_hook_active) session.reopened = true
     return next(e)
@@ -314,7 +317,7 @@ export function register(on: On): void {
 
   on('agent.spawn', async ($, e, next) => {
     if (!config.enabled) return next(e)
-    trackMode(e.permissionMode)
+    trackMode(e.permissionMode, e.parentAgentId)
     const now = await $.clock.now()
     const loop = e.parentAgentId ?? MAIN
     const parentDepth = e.parentAgentId ? (session.agents[e.parentAgentId]?.depth ?? 1) : 0
@@ -337,7 +340,13 @@ export function register(on: On): void {
       if (reservedAt !== undefined) releaseStart(session, reservedAt, started)
       await publish($, await $.clock.now())
     }
-  }).catch(($, e, next) => failOpen($, 'agent.spawn', next.error, () => next(e)))
+  }).catch(($, e, next) =>
+    // An overrun before the agent started leaves it unjudged; starting it anyway
+    // would let a stuck guard wave through every agent of a parallel batch.
+    next.error?.kind === 'timeout' && !next.called
+      ? { deny: `agent-usage-guard could not judge this agent in time. Start it again. [${SIGNATURE}]` }
+      : failOpen($, 'agent.spawn', next.error, () => next(e)),
+  )
 
   on('tool.call', async ($, e, next) => {
     if (!config.enabled) return next(e)
@@ -386,7 +395,7 @@ export function register(on: On): void {
         await publish($, await $.clock.now())
       }
     }
-    observeToolResult(session, await $.clock.now(), print, Boolean(result.isError) && !result.deny)
+    observeToolResult(session, await $.clock.now(), loop, print, Boolean(result.isError) && !result.deny)
     return result
   }).catch(($, e, next) => failOpen($, 'tool.call', next.error, () => next(e)))
 
@@ -457,7 +466,15 @@ async function housekeeping($: Api): Promise<void> {
   try {
     const now = await $.clock.now()
     const keys = await $.store.keys()
-    for (const key of expiredJournalKeys(keys, now, config.journalDays)) await $.store.delete(key)
+    const expired = expiredJournalKeys(keys, now, config.journalDays)
+    for (const key of expired) await $.store.delete(key)
+    const days = keys.filter((k) => isJournalKey(k) && !expired.includes(k)).sort()
+    const sizes = await Promise.all(days.map(async (k) => JSON.stringify((await $.store.get(k)) ?? null).length))
+    let total = sizes.reduce((sum, n) => sum + n, 0)
+    for (let i = 0; total > JOURNAL_BUDGET_BYTES && i < days.length; i++) {
+      await $.store.delete(days[i]!)
+      total -= sizes[i]!
+    }
     for (const key of keys.filter((k) => k.startsWith(PEER_PREFIX))) {
       const record = (await $.store.get(key)) as { at?: unknown } | undefined
       if (typeof record?.at !== 'number' || now - record.at > STALE_PEER_MS) await $.store.delete(key)
@@ -472,8 +489,9 @@ function canAsk(): boolean {
   return interactive && !askUnavailable && permissionMode !== 'dontAsk'
 }
 
-function trackMode(mode: string | undefined): void {
-  if (!mode) return
+/** Follows the main loop's permission mode; a subagent's own mode says nothing about who can answer. */
+function trackMode(mode: string | undefined, agentId: string | undefined): void {
+  if (!mode || agentId) return
   permissionMode = mode
   session.canAsk = canAsk()
 }
@@ -488,6 +506,7 @@ function sourceOf(kind: string): PromptSource {
 async function publish($: Api, now: number): Promise<void> {
   if (!session.id) return
   lastPublished = now
+  expireAgents(session, now, config.peerTtlMs)
   prune(session, now, config.windowMs)
   try {
     await $.store.set(PEER_PREFIX + session.id, peerRecord(session, now, config.windowMs))
@@ -533,11 +552,15 @@ async function idleTime($: Api, now: number): Promise<number | undefined> {
 
 async function refreshStatus($: Api): Promise<void> {
   if (!interactive) return
-  const now = await $.clock.now()
-  const text = statusLine(session, peers, config, now)
-  if (text === lastStatus) return
-  lastStatus = text
-  $.ui.status(text)
+  try {
+    const now = await $.clock.now()
+    const text = statusLine(session, peers, config, now)
+    if (text === lastStatus) return
+    lastStatus = text
+    $.ui.status(text)
+  } catch (error) {
+    $.ui.log(`agent-usage-guard could not update its status line: ${String(error)}`, { to: 'debug' })
+  }
 }
 
 type Asked = { answer: string | undefined; unavailable: boolean }
@@ -561,26 +584,24 @@ async function askUser($: Api, ask: Ask): Promise<Asked> {
 
 /**
  * The agent gate, with one question at a time: calls that trip while a
- * question is open wait for its answer, then are judged again under it.
+ * question is open are held back at once, and the model starts them again
+ * once it is answered. Waiting instead could outlast the hook's time limit.
  */
 async function agentVerdict(
   $: Api,
   start: number,
   request: { loop: string; depth: number; resume: boolean },
 ): Promise<{ verdict: Verdict; reservedAt?: number }> {
-  let now = start
+  const now = start
   await loadPeers($, now)
-  // The check for an open question and the claim on it must not straddle an
-  // await, or two parallel calls would each ask.
-  for (let open = pending.get('agents'); open; open = pending.get('agents')) {
-    await open
-    now = await $.clock.now()
-  }
   expireAgents(session, now, config.peerTtlMs)
   prune(session, now, config.windowMs)
   const verdict = agentGate(session, peers, config, now, request)
   if (verdict.kind === 'allow') return { verdict, reservedAt: reserveStart(session, now) }
   if (verdict.kind !== 'ask') return { verdict }
+  // The check for an open question and the claim on it must not straddle an
+  // await, or two parallel calls would each ask.
+  if (pending.has('agents')) return { verdict: heldForQuestion('agents') }
   const asked = (async (): Promise<{ verdict: Verdict; reservedAt?: number }> => {
     await journal($, now, { ev: 'ask', rule: verdict.trips[0]?.rule })
     const { answer, unavailable } = await askUser($, verdict)
@@ -601,17 +622,10 @@ async function agentVerdict(
   }
 }
 
-/** A heavy-context question, one per loop at a time. */
+/** A heavy-context question, one per loop at a time; calls meanwhile are held back. */
 async function settleHeavy($: Api, ask: Ask, request: ToolRequest): Promise<Verdict> {
   const key = `heavy:${ask.loop}`
-  const open = pending.get(key)
-  if (open) {
-    await open
-    const now = await $.clock.now()
-    const loop = session.loops[ask.loop]
-    if (loop?.stopped) return toolGate(session, config, now, { loop: ask.loop, tool: '', fingerprint: '', label: '' })
-    return { kind: 'allow' }
-  }
+  if (pending.has(key)) return heldForQuestion('heavy')
   const asked = (async (): Promise<Verdict> => {
     const now = await $.clock.now()
     await journal($, now, { ev: 'ask', rule: 'tool-budget', ctx: contextBucket(session.loops[ask.loop]?.context) })

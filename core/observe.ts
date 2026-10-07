@@ -141,14 +141,21 @@ export function expireAgents(state: SessionState, now: number, ttlMs: number): v
   }
 }
 
-/** A tool call finished; identical failures in a row feed the retry fuse. */
-export function observeToolResult(state: SessionState, now: number, fingerprint: string, failed: boolean): void {
+/**
+ * A tool call finished; identical failures in a row feed the retry fuse. Any
+ * other call by the same loop breaks the row, so test, edit, re-run is never
+ * a retry loop.
+ */
+export function observeToolResult(state: SessionState, now: number, loop: LoopId, fingerprint: string, failed: boolean): void {
+  for (const [key, failure] of Object.entries(state.failures)) {
+    if (failure.loop === loop && key !== fingerprint) delete state.failures[key]
+  }
   if (!failed) {
     delete state.failures[fingerprint]
     return
   }
   const previous = state.failures[fingerprint]
-  state.failures[fingerprint] = { count: (previous?.count ?? 0) + 1, last: now }
+  state.failures[fingerprint] = { count: (previous?.count ?? 0) + 1, last: now, loop }
 }
 
 /** The main turn ended: per-turn conditions reset. */

@@ -54,12 +54,12 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | A prompt that would re-read this much context | 500k tokens | asks: compact then send, send anyway, or cancel |
 | | Tool calls per 10 minutes while a conversation or agent carries this much | 20 calls at 400k | asks: keep going, compact after this turn, or stop |
 | | A heavy session idle long enough for its prompt cache to expire | 150k tokens, 1 h idle | asks before re-writing the cache |
-| Loops | The same tool call failing again and again | 3 identical failures | refuses the identical retry |
+| Loops | The same tool call failing again and again, with no other call in between | 3 identical failures | refuses the identical retry |
 | | Refused agent calls within 10 minutes | 5 | pauses agent spawns for 10 min |
 
 Agents covers subagents, agent-team teammates, workflow agents, and finished subagents resumed with `SendMessage`. Each tool call is judged on the context of the loop that makes it, so a small subagent never inherits the main conversation's size.
 
-**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel share one question. If you allow it, the condition stays allowed until it clears: for a plan window, until the window resets. If you decline or dismiss the question, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
+**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel while it is open are held back, and Claude starts them again once you answer. If you allow it, the condition stays allowed until it clears: for a plan window, until the window resets. If you decline or dismiss the question, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
 
 **When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
 
@@ -71,7 +71,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 /usage-guard [status]                          what the guard sees right now
 /usage-guard allow [agents|context] [minutes]  lift its limits for this session (default: all, 10 min)
 /usage-guard pause [minutes]                   the same as allow, for every limit
-/usage-guard resume                            end an allow early, and let declined questions ask again
+/usage-guard resume                            end an allow early, lift the agent pause, and let declined questions ask again
 /usage-guard report [days]                     what it did on this machine (default: 7 days)
 /usage-guard help                              these commands
 ```

@@ -51,7 +51,7 @@ handler for each is named in brackets.
 | A finished agent is sent new work | `agentGate(..., { resume: true })` | `tool.call` for `SendMessage` |
 | An agent started or finished a run | `observeSpawn`, `releaseStart`, `observeAgentRunEnd` | `agent.spawn` result, `turn.complete` |
 | A tool is about to run | `toolGate(...)` | `tool.call` |
-| A tool finished | `observeToolResult(state, now, fingerprint, failed)` | `tool.call` after `next` |
+| A tool finished | `observeToolResult(state, now, loop, fingerprint, failed)` | `tool.call` after `next` |
 | A prompt is about to be sent | `promptGate(...)` | `prompt.submit` |
 | A request failed | `lockoutKind(error, text, readings)` | `classic.StopFailure` |
 | The conversation compacted | `observeCompaction(state)` | `classic.PostCompact`, `classic.SessionStart` with source `compact` |
@@ -71,7 +71,9 @@ A verdict is one of:
 Two duties fall on every adapter, because only it knows the harness:
 
 1. **One question at a time per family.** Parallel calls that trip while a
-   question is open wait for its answer and are judged again under it.
+   question is open are refused at once with `heldForQuestion`, which asks the
+   model to retry after the answer and feeds neither the ladder nor the fuse.
+   Waiting for the answer instead could outlast a hook's time limit.
 2. **Reserve in the same step as the verdict.** Parallel spawns are judged
    concurrently; `reserveStart` right after an allowing `agentGate` is what
    makes a batch of five against a limit of four let exactly four through.

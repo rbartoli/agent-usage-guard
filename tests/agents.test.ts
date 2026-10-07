@@ -71,13 +71,17 @@ describe('agent gate', () => {
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ answer: 'unavailable' })])
   })
 
-  test('agents started in parallel while a question is open share one question', async ($, on) => {
+  test('agents started while a question is open are held back at once, without waiting on it', async ($, on) => {
     const w = world(on, { answers: ['Allow'] })
     await start($, w, true)
     for (let i = 0; i < 4; i++) await spawn($, w)
     const results = await Promise.all([spawn($, w), spawn($, w), spawn($, w)])
-    expect(results.every((r) => r.agentId !== undefined)).toBe(true)
+    expect(results.filter((r) => r.agentId !== undefined)).toHaveLength(1)
+    const held = results.filter((r) => r.deny !== undefined).map((r) => String(r.deny))
+    expect(held).toHaveLength(2)
+    for (const text of held) expect(text).toMatch(/The user is being asked about starting agents\. Wait for that answer, then start this agent again/)
     expect(w.questions).toHaveLength(1)
+    expect((await spawn($, w)).agentId).toBeDefined()
   })
 
   test('five agents started in one parallel batch let exactly four through', async ($, on) => {
@@ -223,6 +227,16 @@ describe('agent fuse and overrides', () => {
     expect(String(fromMain.deny)).toMatch(/Agent spawns in this session are paused until/)
     expect(w.questions).toEqual([])
     await w.clock.advance(10 * 60_000)
+    expect((await spawn($, w)).agentId).toBeDefined()
+  })
+
+  test('resume clears a burning fuse, so declined questions really ask again', async ($, on) => {
+    const w = world(on, { answers: ['Allow'] })
+    await start($, w, true)
+    const first = await spawn($, w)
+    for (let i = 0; i < 5; i++) await spawn($, w, String(first.agentId))
+    expect(String((await spawn($, w)).deny)).toMatch(/paused until/)
+    await $.command.run({ command: 'usage-guard', args: 'resume' } as never)
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 

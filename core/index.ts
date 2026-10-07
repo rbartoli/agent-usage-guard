@@ -2,7 +2,7 @@
 // no clock: an adapter reports facts, asks for verdicts, and carries them out.
 // See docs/architecture.md for the contract an adapter keeps.
 
-export { AGENT_ALLOW, AGENT_REFUSE, type AgentRequest, agentGate, highestLimit, resolveAgentAsk } from './agents.ts'
+export { AGENT_ALLOW, AGENT_REFUSE, type AgentRequest, agentGate, heldForQuestion, highestLimit, resolveAgentAsk } from './agents.ts'
 export { type Command, DEFAULT_ALLOW_MINUTES, applyOverride, helpText, parseCommand, resumeGuard } from './commands.ts'
 export { type Config, SPECS, SWITCHES, defaultConfig, parseConfig } from './config.ts'
 export {
