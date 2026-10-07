@@ -15,6 +15,8 @@ export type WorldOptions = {
   store?: Record<string, unknown>
   /** Answers for questions, in order; `undefined` dismisses the dialog. */
   answers?: Array<string | undefined>
+  /** The session has no AskUserQuestion tool, as with `--tools Agent,Read`. */
+  noQuestionTool?: boolean
   /** Claude Code's answer to a tool call the test fires. */
   toolResult?: (e: ToolEvent) => Record<string, unknown>
   /** What `$.session.usage()` reports for the main context. */
@@ -116,6 +118,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   on('agent.spawn', () => ({ model: 'claude-test', agentId: `agent-${w.ran.filter((r) => r === 'spawn').length}` }))
   on('tool.call', ($, e) => {
     if (e.tool === 'AskUserQuestion') {
+      if (options.noQuestionTool) return { deny: 'no tool named "AskUserQuestion" in this session' }
       const questions = e.questions as Array<{ question: string; options: Array<{ label: string }> }>
       const question = questions[0]!
       w.questions.push(question.question)

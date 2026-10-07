@@ -14,6 +14,7 @@ import {
   type PromptSource,
   type SessionState,
   SIGNATURE,
+  type ToolRequest,
   type Verdict,
   DEFAULT_ALLOW_MINUTES,
   agentGate,
@@ -65,6 +66,8 @@ type Api = EngineInterface
 const COMMAND = 'usage-guard'
 const PEER_PREFIX = 'peer:'
 const HEARTBEAT_MS = 60_000
+/** Keeps one session's day of journal rows well inside the store's 4 MiB. */
+const MAX_ROWS_PER_DAY = 2000
 /** A peer record nobody refreshed for a day is from a session that is gone. */
 const STALE_PEER_MS = 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
@@ -74,6 +77,8 @@ let config: Config = defaultConfig()
 let problems: string[] = []
 let session: SessionState = newSession('', false)
 let interactive = false
+/** The session has no AskUserQuestion tool (`--tools` left it out), so nobody can be asked. */
+let askUnavailable = false
 let permissionMode: string | undefined
 let transcriptPath: string | undefined
 let peers: PeerRecord[] = []
@@ -139,6 +144,14 @@ export function register(on: On): void {
     if (session.agents[e.agent_id]) {
       observeAgentActive(session, e.agent_id)
       await publish($, await $.clock.now())
+    } else if (e.agent_type && session.pendingStarts === 0) {
+      // Started without an agent.spawn the guard could hold, such as a /subtask
+      // fork the user ran: counted, never blocked. Claude Code's own internal
+      // agents have no type and are left out.
+      const now = await $.clock.now()
+      observeSpawn(session, now, { agentId: e.agent_id, kind: e.agent_type === 'fork' ? 'fork' : 'subagent', depth: 1 })
+      session.starts.push(now)
+      await publish($, now)
     }
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.SubagentStart', next.error, () => next(e)))
@@ -259,9 +272,15 @@ export function register(on: On): void {
     if (verdict.kind !== 'ask') return next(e)
 
     await journal($, now, { ev: 'ask', rule: verdict.trips[0]?.rule, ctx: contextBucket(context) })
-    const answer = await askUser($, verdict)
-    const outcome = resolvePromptAsk(session, verdict, answer)
+    const { answer, unavailable } = await askUser($, verdict)
     const answered = await $.clock.now()
+    if (unavailable) {
+      await journal($, answered, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: 'unavailable' })
+      const alone = promptGate(session, peers, config, answered, { source, text: e.text, idleMs: await idleTime($, answered) })
+      if (alone.kind === 'drop') return { drop: alone.message }
+      return alone.kind === 'allow' && alone.note ? next({ ...e, context: [...(e.context ?? []), alone.note] }) : next(e)
+    }
+    const outcome = resolvePromptAsk(session, verdict, answer)
     await journal($, answered, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: answerKind(outcome.kind, answer) })
     if (outcome.kind === 'allow') {
       const note = contextNote(session, config)
@@ -336,8 +355,9 @@ export function register(on: On): void {
     const print = fingerprint(canonical(argumentsOf(e)))
     if (!resumed) {
       const label = loop === MAIN ? 'this conversation' : `agent ${session.agents[loop]?.name ?? loop.slice(0, 8)}`
-      let verdict = toolGate(session, config, now, { loop, tool: e.tool, fingerprint: print, label })
-      if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict)
+      const request = { loop, tool: e.tool, fingerprint: print, label }
+      let verdict = toolGate(session, config, now, request)
+      if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
       if (verdict.kind === 'deny') {
         await journal($, await $.clock.now(), {
           ev: 'deny',
@@ -444,7 +464,7 @@ async function housekeeping($: Api): Promise<void> {
 
 /** A person can answer a question: an interactive session not set to never ask. */
 function canAsk(): boolean {
-  return interactive && permissionMode !== 'dontAsk'
+  return interactive && !askUnavailable && permissionMode !== 'dontAsk'
 }
 
 function trackMode(mode: string | undefined): void {
@@ -515,12 +535,22 @@ async function refreshStatus($: Api): Promise<void> {
   $.ui.status(text)
 }
 
-/** Asks in Claude Code's own question dialog; undefined when nobody answers. */
-async function askUser($: Api, ask: Ask): Promise<string | undefined> {
+type Asked = { answer: string | undefined; unavailable: boolean }
+
+/**
+ * Asks in Claude Code's own question dialog. `answer` is undefined when the
+ * user dismissed it. `unavailable` means the question could not be asked at
+ * all, because the session has no AskUserQuestion tool: from then on the
+ * session counts as one nobody can answer, and the gate decides alone.
+ */
+async function askUser($: Api, ask: Ask): Promise<Asked> {
   try {
-    return await $.ui.ask(ask.question, { options: ask.options, header: HEADER })
-  } catch {
-    return undefined
+    return { answer: await $.ui.ask(ask.question, { options: ask.options, header: HEADER }), unavailable: false }
+  } catch (error) {
+    if (!/no tool named "AskUserQuestion"/.test(String(error))) return { answer: undefined, unavailable: false }
+    askUnavailable = true
+    session.canAsk = false
+    return { answer: undefined, unavailable: true }
   }
 }
 
@@ -548,11 +578,13 @@ async function agentVerdict(
   if (verdict.kind !== 'ask') return { verdict }
   const asked = (async (): Promise<{ verdict: Verdict; reservedAt?: number }> => {
     await journal($, now, { ev: 'ask', rule: verdict.trips[0]?.rule })
-    const answer = await askUser($, verdict)
+    const { answer, unavailable } = await askUser($, verdict)
     const answeredAt = await $.clock.now()
-    const resolved = resolveAgentAsk(session, config, answeredAt, verdict, answer)
+    const resolved = unavailable
+      ? agentGate(session, peers, config, answeredAt, request)
+      : resolveAgentAsk(session, config, answeredAt, verdict, answer)
     const reservedAt = resolved.kind === 'allow' ? reserveStart(session, answeredAt) : undefined
-    await journal($, answeredAt, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: answer === undefined ? 'dismiss' : resolved.kind === 'allow' ? 'allow' : 'refuse' })
+    await journal($, answeredAt, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: unavailable ? 'unavailable' : answer === undefined ? 'dismiss' : resolved.kind === 'allow' ? 'allow' : 'refuse' })
     await refreshStatus($)
     return { verdict: resolved, ...(reservedAt === undefined ? {} : { reservedAt }) }
   })()
@@ -565,7 +597,7 @@ async function agentVerdict(
 }
 
 /** A heavy-context question, one per loop at a time. */
-async function settleHeavy($: Api, ask: Ask): Promise<Verdict> {
+async function settleHeavy($: Api, ask: Ask, request: ToolRequest): Promise<Verdict> {
   const key = `heavy:${ask.loop}`
   const open = pending.get(key)
   if (open) {
@@ -578,8 +610,12 @@ async function settleHeavy($: Api, ask: Ask): Promise<Verdict> {
   const asked = (async (): Promise<Verdict> => {
     const now = await $.clock.now()
     await journal($, now, { ev: 'ask', rule: 'tool-budget', ctx: contextBucket(session.loops[ask.loop]?.context) })
-    const answer = await askUser($, ask)
+    const { answer, unavailable } = await askUser($, ask)
     const answeredAt = await $.clock.now()
+    if (unavailable) {
+      await journal($, answeredAt, { ev: 'answer', rule: 'tool-budget', answer: 'unavailable' })
+      return toolGate(session, config, answeredAt, request)
+    }
     const outcome = resolveHeavyAsk(session, config, answeredAt, ask, answer)
     if (outcome.compactAfterTurn) compactAfterTurn = true
     const kind = answer === undefined ? 'dismiss' : outcome.compactAfterTurn ? 'compact' : outcome.verdict.kind === 'allow' ? 'allow' : 'refuse'
@@ -633,6 +669,7 @@ async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): P
     }
     const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined)) as Omit<JournalRow, 't' | 's'>
     journalCache.rows.push({ t: now, s: session.id.slice(0, 8), ...clean })
+    if (journalCache.rows.length > MAX_ROWS_PER_DAY) journalCache.rows.splice(0, journalCache.rows.length - MAX_ROWS_PER_DAY)
     await $.store.set(key, journalCache.rows)
   } catch (error) {
     $.ui.log(`agent-usage-guard could not write its journal: ${String(error)}`, { to: 'debug' })

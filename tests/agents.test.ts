@@ -61,6 +61,16 @@ describe('agent gate', () => {
     expect(String(refused.deny)).toMatch(/The user answered "use haiku agents instead"/)
   })
 
+  test('a session without the question tool is treated as one nobody can answer, not as a dismissal', async ($, on) => {
+    const w = world(on, { noQuestionTool: true })
+    await start($, w, true)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    const refused = await spawn($, w)
+    expect(String(refused.deny)).toMatch(/Nobody can approve it in this session/)
+    expect(String(refused.deny)).not.toMatch(/dismissed/)
+    expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ answer: 'unavailable' })])
+  })
+
   test('agents started in parallel while a question is open share one question', async ($, on) => {
     const w = world(on, { answers: ['Allow'] })
     await start($, w, true)
@@ -240,6 +250,22 @@ describe('agent fuse and overrides', () => {
     await start($, w, true)
     const result = await $.prompt.submit({ text: '[allow-usage-guard] continue', origin: { kind: 'composer' }, wait: false } as never)
     expect(result).toEqual({ text: '[allow-usage-guard] continue' })
+  })
+})
+
+describe('agents started outside the gate', () => {
+  test('a /subtask fork is counted, so the next agent sees it, but is never blocked', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: '1' } })
+    await start($, w, false)
+    await $.classic.SubagentStart({ agent_id: 'afork-1', agent_type: 'fork' } as never)
+    expect(String((await spawn($, w)).deny)).toMatch(/1 agent is running on this machine \(limit 1\)/)
+  })
+
+  test("Claude Code's own internal agents, which have no type, are not counted", async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: '1' } })
+    await start($, w, false)
+    await $.classic.SubagentStart({ agent_id: 'a-suggest', agent_type: '' } as never)
+    expect((await spawn($, w)).agentId).toBeDefined()
   })
 })
 

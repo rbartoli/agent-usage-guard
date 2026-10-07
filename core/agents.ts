@@ -3,7 +3,7 @@
 
 import type { Config } from './config.ts'
 import { type LimitReading, type LoopId, type PeerRecord, type SessionState, overrideCovers, runningAgents, within } from './state.ts'
-import { duration, shortClock, tokens, windowName } from './text.ts'
+import { count, duration, shortClock, tokens, windowName } from './text.ts'
 import { ALLOW, type Ask, type Deny, type Trip, type Verdict, join, refuse, sentence } from './verdict.ts'
 
 export type AgentRequest = {
@@ -107,7 +107,7 @@ function agentTrips(
   if (running >= config.agentMax) {
     trips.push({
       rule: 'concurrency',
-      detail: `${running} agents are running on this machine (limit ${config.agentMax})`,
+      detail: `${count(running, 'agent')} ${running === 1 ? 'is' : 'are'} running on this machine (limit ${config.agentMax})`,
       leaseKey: 'concurrency',
       leaseUntil: until,
     })
@@ -117,7 +117,7 @@ function agentTrips(
   if (starts >= config.rollingMax) {
     trips.push({
       rule: 'starts',
-      detail: `${starts} agents started on this machine in the last ${span} (limit ${config.rollingMax})`,
+      detail: `${count(starts, 'agent')} started on this machine in the last ${span} (limit ${config.rollingMax})`,
       leaseKey: 'starts',
       leaseUntil: until,
     })

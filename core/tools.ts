@@ -4,7 +4,7 @@
 
 import type { Config } from './config.ts'
 import { type LoopId, MAIN, type SessionState, loopOf, overrideCovers, within } from './state.ts'
-import { duration, shortClock, tokens } from './text.ts'
+import { count, duration, shortClock, tokens } from './text.ts'
 import { ALLOW, type Ask, type Verdict, refuse } from './verdict.ts'
 
 /**
@@ -60,7 +60,7 @@ export function toolGate(state: SessionState, config: Config, now: number, reque
     return ALLOW
   }
 
-  const detail = `${request.label} made ${heavy.length} tool calls in the last ${duration(config.windowMs)} above ${tokens(config.toolContext)} context tokens, and each one re-reads the ${tokens(context)}`
+  const detail = `${request.label} made ${count(heavy.length, 'tool call')} in the last ${duration(config.windowMs)} above ${tokens(config.toolContext)} context tokens, and each one re-reads the ${tokens(context)}`
   if (!state.canAsk) {
     const base = `${detail.charAt(0).toUpperCase()}${detail.slice(1)}. Nobody can approve more in this session. ${request.loop === MAIN ? 'End the turn; the session needs /compact.' : 'Finish with what you have and report back.'}`
     return refuse(state, config, now, 'tool-budget', `tool-budget:${request.loop}`, base, false)

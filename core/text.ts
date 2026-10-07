@@ -1,5 +1,10 @@
 // Formatting shared by every message the guard writes.
 
+/** `1 agent`, `4 agents`. */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
+}
+
 export function tokens(n: number): string {
   if (n >= 1_000_000) return `${trim(n / 1_000_000)}M`
   if (n >= 1000) return `${Math.round(n / 1000)}k`

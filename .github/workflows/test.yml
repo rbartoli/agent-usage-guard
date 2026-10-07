@@ -7,71 +7,32 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Claude Code release the mod is validated and tested against. Raise it
+  # with the README's "checked against" version.
+  CLAUDE_CODE: "@anthropic-ai/claude-code@2.1.292"
+
 jobs:
-  quality:
-    runs-on: [self-hosted, Linux, X64]
+  test:
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-      - run: python -m pip install ruff==0.16.0
-      - name: Lint
-        run: ruff check agent-usage-guard.py agent-usage-guard.test.py mutation-smoke.py demo/run_demo.py demo/fixture/northstar-api/src
-      - name: Format
-        run: ruff format --check agent-usage-guard.py agent-usage-guard.test.py mutation-smoke.py demo/run_demo.py demo/fixture/northstar-api/src
-      - name: Demo CLI check
-        run: python demo/run_demo.py --help
-      - name: Validate JSON manifests
-        run: |
-          for file in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json examples/settings-hooks.json demo/empty-mcp.json; do
-            python -m json.tool "$file" >/dev/null
-          done
-      # The self-hosted runners carry no node on PATH, and the plugin contract
-      # is checked by Claude Code itself, which is an npm package.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Validate Claude plugin contract
-        run: npx --yes @anthropic-ai/claude-code@2.1.220 plugin validate . --strict
-
-  test:
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version:
-          - "3.9"
-          - "3.10"
-          - "3.11"
-          - "3.12"
-          - "3.13"
-          - "3.14"
-
-    # Interpreters come from uv, not actions/setup-python: the self-hosted
-    # runners are Ubuntu 26.04, for which python-versions publishes no 3.9
-    # build, and 3.9 is the floor this guard promises to run on.
-    env:
-      UV: uv run --python ${{ matrix.python-version }}
-      COV: uv run --python ${{ matrix.python-version }} --with coverage==7.10.6
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9.0.0
-      - name: Provision Python
-        run: uv python install ${{ matrix.python-version }}
-      - name: Compile
-        run: $UV python -m py_compile agent-usage-guard.py agent-usage-guard.test.py mutation-smoke.py demo/run_demo.py demo/fixture/northstar-api/src/auth.py demo/fixture/northstar-api/src/database.py
-      - name: Test
-        if: matrix.python-version != '3.14'
-        run: $UV python agent-usage-guard.test.py
-      - name: Test with branch coverage
-        if: matrix.python-version == '3.14'
+      - name: Install Claude Code
+        run: npm install --global "$CLAUDE_CODE"
+      - name: Validate the plugin and its hooks module
+        run: claude plugin validate . --strict
+      - name: Run the mod test suite
+        run: claude plugin test
+      - name: Check JSON manifests
         run: |
-          $COV coverage run agent-usage-guard.test.py
-          $COV coverage combine --quiet
-          $COV coverage report --include='*/agent-usage-guard.py,*/demo/run_demo.py'
-      - name: Mutation smoke test
-        if: matrix.python-version == '3.14'
-        run: $UV python mutation-smoke.py
+          for file in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json demo/empty-mcp.json tsconfig.json; do
+            node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$file"
+          done
+      - name: Check the demo launcher
+        run: |
+          bash -n demo/run-demo.sh
+          shellcheck demo/run-demo.sh
