@@ -1,9 +1,3 @@
-__pycache__/
-.coverage
-.coverage.*
-.ruff_cache/
-.venv-cov/
-*.pyc
-*.tmp
-state.json
+# Written by Claude Code when it loads the mod with --plugin-dir
+.claude-plugin/types/
 .DS_Store
