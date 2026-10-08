@@ -17,7 +17,7 @@ describe('lockouts and the report', () => {
     expect(journalRows(w).map((r) => `${r.ev}:${r.kind}`)).toEqual(['lockout:unknown', 'lockout:seven_day', 'lockout:spend_limit', 'lockout:model'])
   })
 
-  test('/usage-guard report reads every session\'s journal on this machine', async ($, on) => {
+  test('/agent-guard report reads every session\'s journal on this machine', async ($, on) => {
     const w = world(on, {
       store: {
         'journal:2027-01-14:other-session': [
@@ -27,8 +27,8 @@ describe('lockouts and the report', () => {
       },
     })
     await start($, w, false)
-    await $.command.run({ command: 'usage-guard', args: 'allow' } as never)
-    const report = await $.command.run({ command: 'usage-guard', args: 'report 3' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow' } as never)
+    const report = await $.command.run({ command: 'agent-guard', args: 'report 3' } as never)
     expect(report.text).toMatch(/3 events from 2 sessions/)
     expect(report.text).toMatch(/Usage-limit lockouts: 1/)
     expect(report.text).toMatch(/Overrides: 1 \(all 1\)/)
@@ -37,7 +37,7 @@ describe('lockouts and the report', () => {
   test('AGENT_GUARD_JOURNAL=0 records nothing', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_JOURNAL: '0' } })
     await start($, w, false)
-    await $.command.run({ command: 'usage-guard', args: 'allow' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow' } as never)
     expect(journalRows(w)).toEqual([])
   })
 

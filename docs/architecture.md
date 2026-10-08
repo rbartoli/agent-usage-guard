@@ -17,7 +17,7 @@ core/                    harness-agnostic: no I/O, no clock, no dependencies
   verdict.ts             verdict types and the denial ladder with the agent fuse
   lockout.ts             which failures were usage-limit lockouts
   journal.ts             journal rows, retention and the report
-  status.ts, commands.ts what the user sees, and /usage-guard
+  status.ts, commands.ts what the user sees, and /agent-guard
   text.ts                formatting, fingerprints
   index.ts               the core's public entry point
 hooks/register.ts        the Claude Code adapter: the only file that calls the mods API

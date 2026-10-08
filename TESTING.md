@@ -17,7 +17,7 @@ CI runs both on GitHub-hosted runners against the pinned Claude Code version in
 writes when it loads the mod with `--plugin-dir`, so it runs locally:
 
 ```sh
-claude -p "/usage-guard" --plugin-dir .   # writes .claude-plugin/types/
+claude -p "/agent-guard" --plugin-dir .   # writes .claude-plugin/types/
 npx -p typescript@5.9 tsc -p tsconfig.json
 ```
 
@@ -43,13 +43,13 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 | Tool gate | Retry fuse on identical failures in a row only, so test, edit, re-run is not a loop; a permission refusal is not a failure; the heavy-context budget asks once, stops the turn, or compacts after it; subagents judged on their own context; `SubagentHandback` and `TaskStop` never held; compaction clears the budget |
 | Prompt gate | Heavy prompt asks, compacts then resends as the user's own words, or cancels back into the input box; headless holds with a reason; notifications pass; dormant resumes ask or are capped across sessions; the context warning is given once |
 | Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
-| Overrides | `/usage-guard allow`, `resume`, the old markers sent alone, and the off switch |
+| Overrides | `/agent-guard allow`, `resume`, the old markers sent alone, and the off switch |
 | Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
 
 ## What is checked by hand
 
 On Claude Code 2.1.292, the question dialog, the status line and
-`/usage-guard` were exercised in a real interactive session of this mod, and
+`/agent-guard` were exercised in a real interactive session of this mod, and
 the compact-then-send flow (drop, compact from a timer, resend as the user) in
 a probe mod built on the same calls. The demo recording in `demo/` reproduces
 the main path against the real UI and uses a little usage.

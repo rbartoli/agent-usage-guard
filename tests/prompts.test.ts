@@ -115,14 +115,14 @@ describe('switches', () => {
     const w = world(on, { contextTokens: 900_000, env: { AGENT_GUARD: '0' } })
     await start($, w, false)
     expect(await $.prompt.submit(headless('go'))).toEqual({ text: 'go' })
-    const status = await $.command.run({ command: 'usage-guard', args: '' } as never)
+    const status = await $.command.run({ command: 'agent-guard', args: '' } as never)
     expect(status.text).toBe('Off: AGENT_GUARD is set to turn it off.')
   })
 
   test('a malformed threshold keeps its default and shows up in the status', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: 'lots' } })
     await start($, w, false)
-    const status = await $.command.run({ command: 'usage-guard', args: 'status' } as never)
+    const status = await $.command.run({ command: 'agent-guard', args: 'status' } as never)
     expect(status.text).toMatch(/Config: AGENT_GUARD_AGENT_MAX=lots is not a number from 1 to 1000; using 4\./)
     expect(status.text).toMatch(/\(limit 4\)/)
   })

@@ -1,4 +1,4 @@
-// `/usage-guard` and its arguments. The command runs without a model turn, so
+// `/agent-guard` and its arguments. The command runs without a model turn, so
 // the model never sees an override and cannot take one as permission.
 
 import { type Scope, type SessionState, loopOf } from './state.ts'
@@ -60,7 +60,7 @@ export function applyOverride(state: SessionState, now: number, scope: Scope, mi
     for (const loop of Object.values(state.loops)) loop.stopped = false
     state.failures = {}
   }
-  return `${sentenceCase(scopeName(scope))} lifted for ${duration(minutes * 60_000)}, until ${shortClock(until)}. /usage-guard resume ends it early.`
+  return `${sentenceCase(scopeName(scope))} lifted for ${duration(minutes * 60_000)}, until ${shortClock(until)}. /agent-guard resume ends it early.`
 }
 
 /** Ends an override and clears declined questions, so the guard asks again. */

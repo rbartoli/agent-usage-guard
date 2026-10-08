@@ -82,7 +82,7 @@ export function refuse(
   const parts = [base]
   if (n >= 2 && state.reopened) {
     parts.push(
-      'A Stop hook reopened this turn, so ending the turn will not clear this. Tell the user that agent-usage-guard is holding it and that /usage-guard allow lifts it, then wait for their answer.',
+      'A Stop hook reopened this turn, so ending the turn will not clear this. Tell the user that agent-usage-guard is holding it and that /agent-guard allow lifts it, then wait for their answer.',
     )
   } else if (n === 2) {
     parts.push(`This has not changed since ${clock(earlier[0]!.at)}, so the same call fails again. Do something different.`)
