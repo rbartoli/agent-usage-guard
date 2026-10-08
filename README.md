@@ -24,7 +24,7 @@ Most usage tools are **monitors**: they tell you what you spent after you spent 
 Run these commands inside Claude Code v2.1.287 or later:
 
 ```text
-/plugin marketplace add rblab-io/agent-usage-guard
+/plugin marketplace add rbartoli/agent-usage-guard
 /plugin install agent-usage-guard@agent-usage-guard
 /reload-plugins
 ```

@@ -3,8 +3,8 @@
   "description": "A Claude Code mod that keeps agent fan-out, heavy context and retry loops from spending your usage window: plan-aware agent gates, context gates and loop fuses that ask you in Claude Code's own dialog.",
   "version": "1.0.0",
   "author": { "name": "Riccardo Bartoli" },
-  "homepage": "https://github.com/rblab-io/agent-usage-guard",
-  "repository": "https://github.com/rblab-io/agent-usage-guard",
+  "homepage": "https://github.com/rbartoli/agent-usage-guard",
+  "repository": "https://github.com/rbartoli/agent-usage-guard",
   "license": "MIT",
   "keywords": ["mod", "usage", "rate-limit", "subagents", "context", "guardrails", "cost"]
 }
