@@ -64,7 +64,7 @@ import {
 
 type Api = EngineInterface
 
-const COMMAND = 'usage-guard'
+const COMMAND = 'agent-guard'
 const PEER_PREFIX = 'peer:'
 const HEARTBEAT_MS = 60_000
 /** Keeps one session's day of journal rows well inside the store's 4 MiB. */

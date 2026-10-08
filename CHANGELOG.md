@@ -39,7 +39,7 @@ event before every agent starts.
   compact then send (the prompt is resent as your own words), send anyway, or
   cancel (the prompt goes back in the input box). Dormant heavy sessions ask the
   same way.
-- **`/usage-guard` replaces the bracket markers.** It runs without a model turn,
+- **`/agent-guard` replaces the bracket markers.** It runs without a model turn,
   so the model never reads an override. The old markers sent alone still work.
 - **A Stop hook that reopens the turn changes the wording.** All 37 identical
   retries after a denial in 0.2.5's journal followed `/goal` reopening a turn the
@@ -67,7 +67,7 @@ event before every agent starts.
   are held back at once instead of waiting on it, so no hook outlives its
   10-second limit; an agent the guard could not judge in time is refused, not
   started. The retry fuse counts identical failures only when nothing else ran
-  in between, so test, edit, re-run is never a loop. `/usage-guard resume` and
+  in between, so test, edit, re-run is never a loop. `/agent-guard resume` and
   `allow` lift the agent pause. The journal stays under 2 MB of the store, and
   a subagent's permission mode no longer decides whether the guard can ask.
 - Tests run in Claude Code's mod test kit (`claude plugin test`), including a

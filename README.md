@@ -29,7 +29,7 @@ Run these commands inside Claude Code v2.1.287 or later:
 /reload-plugins
 ```
 
-Then run `/usage-guard` to see what it sees. Mods are on by default; the [overview](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off) lists the settings that turn them off.
+Then run `/agent-guard` to see what it sees. Mods are on by default; the [overview](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off) lists the settings that turn them off.
 
 ## Why this exists
 
@@ -68,15 +68,15 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 ## Commands
 
 ```text
-/usage-guard [status]                          what the guard sees right now
-/usage-guard allow [agents|context] [minutes]  lift its limits for this session (default: all, 10 min)
-/usage-guard pause [minutes]                   the same as allow, for every limit
-/usage-guard resume                            end an allow early, lift the agent pause, and let declined questions ask again
-/usage-guard report [days]                     what it did on this machine (default: 7 days)
-/usage-guard help                              these commands
+/agent-guard [status]                          what the guard sees right now
+/agent-guard allow [agents|context] [minutes]  lift its limits for this session (default: all, 10 min)
+/agent-guard pause [minutes]                   the same as allow, for every limit
+/agent-guard resume                            end an allow early, lift the agent pause, and let declined questions ask again
+/agent-guard report [days]                     what it did on this machine (default: 7 days)
+/agent-guard help                              these commands
 ```
 
-`/usage-guard` runs at once, even mid-turn, and never starts a model turn, so Claude never sees an override and cannot take one as permission. Sending `[allow-usage-guard]` or `[allow-agent-burst]` alone as a prompt, the markers of earlier versions, does the same as `/usage-guard allow` or `allow agents`.
+`/agent-guard` runs at once, even mid-turn, and never starts a model turn, so Claude never sees an override and cannot take one as permission. Sending `[allow-usage-guard]` or `[allow-agent-burst]` alone as a prompt, the markers of earlier versions, does the same as `/agent-guard allow` or `allow agents`.
 
 ## What it can and cannot see
 
@@ -100,7 +100,7 @@ Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p
 ## See what it did
 
 ```text
-/usage-guard report 30
+/agent-guard report 30
 ```
 
 The report counts usage-limit lockouts per week, plan-window threshold crossings, and every question and refusal by rule, with what you answered. It reads every session's journal on this machine and never leaves it. Set `AGENT_GUARD_JOURNAL=0` to stop recording.
@@ -118,7 +118,7 @@ Set `AGENT_GUARD=0` to turn it off without uninstalling it.
 
 ## Configuration
 
-Set these as environment variables, or under `env` in `~/.claude/settings.json`. Times are in seconds; a value that isn't a number in range keeps its default, and `/usage-guard` says so.
+Set these as environment variables, or under `env` in `~/.claude/settings.json`. Times are in seconds; a value that isn't a number in range keeps its default, and `/agent-guard` says so.
 
 | Variable | Meaning (default) |
 |---|---|

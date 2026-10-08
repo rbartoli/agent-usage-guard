@@ -236,18 +236,18 @@ describe('agent fuse and overrides', () => {
     const first = await spawn($, w)
     for (let i = 0; i < 5; i++) await spawn($, w, String(first.agentId))
     expect(String((await spawn($, w)).deny)).toMatch(/paused until/)
-    await $.command.run({ command: 'usage-guard', args: 'resume' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'resume' } as never)
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 
-  test('/usage-guard allow lifts agent limits and the fuse; resume restores them', async ($, on) => {
+  test('/agent-guard allow lifts agent limits and the fuse; resume restores them', async ($, on) => {
     const w = world(on)
     await start($, w, false)
     for (let i = 0; i < 4; i++) await spawn($, w)
-    const lifted = await $.command.run({ command: 'usage-guard', args: 'allow agents 15' } as never)
+    const lifted = await $.command.run({ command: 'agent-guard', args: 'allow agents 15' } as never)
     expect(lifted.text).toMatch(/^Agent limits lifted for 15 min, until \d\d:\d\d\./)
     expect((await spawn($, w)).agentId).toBeDefined()
-    expect((await $.command.run({ command: 'usage-guard', args: 'resume' } as never)).text).toBe('Limits apply again.')
+    expect((await $.command.run({ command: 'agent-guard', args: 'resume' } as never)).text).toBe('Limits apply again.')
     expect(String((await spawn($, w)).deny)).toMatch(/agents are running on this machine/)
     expect(journalRows(w).some((r) => r.ev === 'override' && r.rule === 'agents')).toBe(true)
   })

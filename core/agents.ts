@@ -33,13 +33,13 @@ export function agentGate(
     return refuse(state, config, now, 'depth', 'depth', base, true)
   }
   if (state.fuseUntil !== undefined && now < state.fuseUntil) {
-    const base = `Agent spawns in this session are paused until ${shortClock(state.fuseUntil)} after repeated refused agent calls. Continue without agents; the user can lift this with /usage-guard allow.`
+    const base = `Agent spawns in this session are paused until ${shortClock(state.fuseUntil)} after repeated refused agent calls. Continue without agents; the user can lift this with /agent-guard allow.`
     return refuse(state, config, now, 'fuse', 'fuse', base, false)
   }
 
   const limit = highestLimit(state, peers, now)
   if (limit && limit.percent >= config.limitDenyPercent) {
-    const base = `${sentence(what)} was refused: ${limitDetail(limit)}, and the guard keeps the rest of the window for the user. Continue without agents; the user can lift this with /usage-guard allow.`
+    const base = `${sentence(what)} was refused: ${limitDetail(limit)}, and the guard keeps the rest of the window for the user. Continue without agents; the user can lift this with /agent-guard allow.`
     return refuse(state, config, now, 'limit-deny', 'limit-deny', base, true)
   }
 
@@ -49,7 +49,7 @@ export function agentGate(
   const details = join(trips.map((t) => t.detail))
   const declinedAt = state.refusals.agents
   if (declinedAt !== undefined && now < declinedAt) {
-    const base = `The user declined new agents for now (${details}). Continue without starting agents; the user can lift this with /usage-guard allow.`
+    const base = `The user declined new agents for now (${details}). Continue without starting agents; the user can lift this with /agent-guard allow.`
     return refuse(state, config, now, trips[0]!.rule, `agents:${trips[0]!.rule}`, base, true)
   }
   if (!state.canAsk) return unattended(state, config, now, trips, details)

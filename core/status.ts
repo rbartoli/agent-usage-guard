@@ -1,5 +1,5 @@
 // What the user sees without asking: one status line while something needs
-// attention, and the `/usage-guard` command's text.
+// attention, and the `/agent-guard` command's text.
 
 import { highestLimit } from './agents.ts'
 import type { Config } from './config.ts'
@@ -37,7 +37,7 @@ export function scopeName(scope: Scope): string {
   return 'all limits'
 }
 
-/** The text `/usage-guard` and `/usage-guard status` print. */
+/** The text `/agent-guard` and `/agent-guard status` print. */
 export function statusReport(
   state: SessionState,
   peers: readonly PeerRecord[],
@@ -87,9 +87,9 @@ export function statusReport(
 
 export const USAGE = [
   'Commands:',
-  '  /usage-guard allow [agents|context] [minutes]   lift the guard\'s limits for this session (default: all, 10 min)',
-  '  /usage-guard pause [minutes]                     same as allow, for every limit',
-  '  /usage-guard resume                              end an allow or pause early, and clear declined questions',
-  '  /usage-guard report [days]                       what the guard did on this machine (default 7 days)',
-  '  /usage-guard status                              this summary',
+  '  /agent-guard allow [agents|context] [minutes]   lift the guard\'s limits for this session (default: all, 10 min)',
+  '  /agent-guard pause [minutes]                     same as allow, for every limit',
+  '  /agent-guard resume                              end an allow or pause early, and clear declined questions',
+  '  /agent-guard report [days]                       what the guard did on this machine (default 7 days)',
+  '  /agent-guard status                              this summary',
 ].join('\n')

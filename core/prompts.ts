@@ -29,7 +29,7 @@ const MARKERS: Readonly<Record<string, Scope>> = {
 
 /**
  * The bracket markers of earlier versions, when one is the whole prompt. They
- * act like `/usage-guard allow`: the prompt is not sent, so no model turn runs
+ * act like `/agent-guard allow`: the prompt is not sent, so no model turn runs
  * and the model never reads the marker.
  */
 export function markerScope(text: string): Scope | undefined {

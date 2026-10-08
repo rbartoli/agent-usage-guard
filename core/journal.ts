@@ -9,7 +9,7 @@ export type JournalEvent =
   | 'answer' // the user answered (or dismissed) a question
   | 'deny' // a model-facing refusal
   | 'drop' // a prompt was held
-  | 'override' // /usage-guard allow or pause
+  | 'override' // /agent-guard allow or pause
   | 'limit' // a plan window crossed an ask or deny threshold
   | 'lockout' // a request failed on a usage limit
 
@@ -75,7 +75,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
 
 type RuleCount = { asks: number; allowed: number; declined: number; denials: number; drops: number }
 
-/** The text `/usage-guard report` prints. */
+/** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
   const recent = rows.filter((r) => now - r.t < days * DAY_MS).sort((a, b) => a.t - b.t)
   const lines = [`agent-usage-guard report: last ${days} day${days === 1 ? '' : 's'}`]
