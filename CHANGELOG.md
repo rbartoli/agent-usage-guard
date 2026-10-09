@@ -26,6 +26,17 @@
   "Keep going" but kept the call history, so the next heavy call asked again.
 - **A `/subtask` fork is counted while a gated agent is starting.** It was
   ignored whenever an agent spawn was pending.
+- **The dormant gate works on resumed sessions.** It timed a resumed session's
+  idleness from the transcript's modification time, which Claude Code rewrites
+  when it resumes a session and hourly while one is open, so `claude --resume`
+  and `--continue` never asked before re-writing an expired cache. Each session
+  now stores when it was last active in the mod store for 30 days, and a resume
+  reads it from there. Found while recording the README demo: a 485k-token
+  session resumed after two hours sent its prompt without asking.
+- **"Compact, then send" leaves the input box empty.** Claude Code puts a
+  dropped prompt back in the input box, so after the guard resent it the box
+  still held the prompt, and one more Enter sent it twice. The guard now takes
+  it out, unless you have changed it.
 
 ## 1.0.0 — 2026-10-07
 

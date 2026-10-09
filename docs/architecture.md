@@ -90,6 +90,12 @@ keeps making model requests (`AGENT_GUARD_PEER_TTL_SECONDS`), so a crashed
 session's agents stop counting on their own. Each session writes only its own
 key, so writes never race.
 
+A session also keeps the time its main loop was last active under a key of its
+own for 30 days. A later process that resumes the session reads it to
+judge how long the session sat idle: the transcript cannot say, because
+Claude Code rewrites its modification time on resume and hourly while the
+session is open.
+
 ## Adding a harness
 
 What a harness offers decides how much of the guard it can carry:

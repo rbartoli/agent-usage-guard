@@ -68,6 +68,7 @@ type Api = EngineInterface
 
 const COMMAND = 'agent-guard'
 const PEER_PREFIX = 'peer:'
+const LAST_ACTIVE_PREFIX = 'last-active:'
 const HEARTBEAT_MS = 60_000
 /** Keeps one session's day of journal rows well inside the store's 4 MiB. */
 const MAX_ROWS_PER_DAY = 2000
@@ -75,6 +76,8 @@ const MAX_ROWS_PER_DAY = 2000
 const JOURNAL_BUDGET_BYTES = 2_000_000
 /** A peer record nobody refreshed for a day is from a session that is gone. */
 const STALE_PEER_MS = 86_400_000
+/** When a session was last active outlives the session by a month, for a later resume. */
+const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
 
@@ -85,9 +88,10 @@ let interactive = false
 /** The session has no AskUserQuestion tool (`--tools` left it out), so nobody can be asked. */
 let askUnavailable = false
 let permissionMode: string | undefined
-let transcriptPath: string | undefined
 let peers: PeerRecord[] = []
 let lastPublished = 0
+/** The last-active time this process last stored, so a heartbeat does not rewrite it. */
+let lastActiveKept: number | undefined
 let lastStatus: string | undefined
 let compactAfterTurn = false
 /** A Stop event happened and no prompt has started a new turn since. */
@@ -116,7 +120,6 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'session.start', next.error, () => next(e)))
 
   on('classic.SessionStart', async ($, e, next) => {
-    transcriptPath = e.transcript_path
     if (e.source === 'compact') observeCompaction(session)
     if (e.source === 'clear' || e.source === 'resume' || e.source === 'fork') await startSession($)
     return next(e)
@@ -166,6 +169,7 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.StopFailure', next.error, () => next(e)))
 
   on('session.end', async ($, e, next) => {
+    await keepLastActive($)
     try {
       if (session.id) await $.store.delete(PEER_PREFIX + session.id)
     } catch {
@@ -288,6 +292,8 @@ export function register(on: On): void {
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       $.clock.after(0, async () => {
+        // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
+        if ((await $.prompt.read()).text === resend.text) await $.prompt.fill({ text: '' }).catch(() => undefined)
         // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
         if (failed !== undefined) {
@@ -448,8 +454,12 @@ async function loadConfig($: Api): Promise<void> {
 async function startSession($: Api): Promise<void> {
   const previous = session.id
   const id = await $.session.id()
-  if (previous && previous !== id) await $.store.delete(PEER_PREFIX + previous).catch(() => undefined)
+  if (previous && previous !== id) {
+    await keepLastActive($)
+    await $.store.delete(PEER_PREFIX + previous).catch(() => undefined)
+  }
   session = newSession(id, canAsk())
+  lastActiveKept = undefined
   journalCache = undefined
   stopSeen = false
   compactAfterTurn = false
@@ -472,6 +482,10 @@ async function housekeeping($: Api): Promise<void> {
     for (const key of keys.filter((k) => k.startsWith(PEER_PREFIX))) {
       const record = (await $.store.get(key)) as { at?: unknown } | undefined
       if (typeof record?.at !== 'number' || now - record.at > STALE_PEER_MS) await $.store.delete(key)
+    }
+    for (const key of keys.filter((k) => k.startsWith(LAST_ACTIVE_PREFIX))) {
+      const at = await $.store.get(key)
+      if (typeof at !== 'number' || now - at > LAST_ACTIVE_KEEP_MS) await $.store.delete(key)
     }
   } catch (error) {
     $.ui.log(`agent-usage-guard housekeeping failed: ${String(error)}`, { to: 'debug' })
@@ -507,6 +521,24 @@ async function publish($: Api, now: number): Promise<void> {
   } catch (error) {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
+  await keepLastActive($)
+}
+
+/**
+ * Stores when the main conversation was last active, so a later process
+ * that resumes the session knows how long it sat idle. The transcript cannot
+ * say: Claude Code rewrites its modification time on resume, and hourly while
+ * the session is open.
+ */
+async function keepLastActive($: Api): Promise<void> {
+  const last = session.loops[MAIN]?.activeAt
+  if (!session.id || last === undefined || last === lastActiveKept) return
+  try {
+    await $.store.set(LAST_ACTIVE_PREFIX + session.id, last)
+    lastActiveKept = last
+  } catch (error) {
+    $.ui.log(`agent-usage-guard could not store when the session was last active: ${String(error)}`, { to: 'debug' })
+  }
 }
 
 /** Reads the other sessions' records; a failure leaves the last ones read. */
@@ -531,14 +563,13 @@ async function readMainContext($: Api): Promise<void> {
   }
 }
 
-/** Time since the conversation was last active, or since the transcript last changed after a resume. */
+/** Time since the main conversation was last active: in this process, or, after a resume, in the one before. */
 async function idleTime($: Api, now: number): Promise<number | undefined> {
   const last = session.loops[MAIN]?.activeAt
   if (last !== undefined) return now - last
-  if (!transcriptPath) return undefined
   try {
-    const stat = await $.fs.stat(transcriptPath)
-    return now - stat.mtimeMs
+    const kept = await $.store.get(LAST_ACTIVE_PREFIX + session.id)
+    return typeof kept === 'number' ? now - kept : undefined
   } catch {
     return undefined
   }

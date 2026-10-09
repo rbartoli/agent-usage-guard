@@ -48,10 +48,12 @@ describe('lockouts and the report', () => {
         'journal:2027-01-10:recent': [{ t: T0 - 5 * DAY, s: 'recent', ev: 'lockout' }],
         'peer:gone': { v: 2, at: T0 - 2 * DAY, running: 3, starts: [], agentTokens: [], dormantResumes: [] },
         'peer:alive': { v: 2, at: T0 - 60_000, running: 1, starts: [], agentTokens: [], dormantResumes: [] },
+        'last-active:gone': T0 - 31 * DAY,
+        'last-active:recent': T0 - 3 * DAY,
       },
     })
     await start($, w, false)
-    expect([...w.store.keys()].sort()).toEqual(['journal:2027-01-10:recent', 'peer:alive'])
+    expect([...w.store.keys()].sort()).toEqual(['journal:2027-01-10:recent', 'last-active:recent', 'peer:alive'])
   })
 
   test('a journal row stores the rule and a context bucket, never the prompt', async ($, on) => {

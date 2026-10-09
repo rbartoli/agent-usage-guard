@@ -27,7 +27,6 @@ export type WorldOptions = {
   onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
   contextTokens?: number
-  transcriptMtime?: number
 }
 
 export type World = {
@@ -38,6 +37,8 @@ export type World = {
   logs: string[]
   statuses: Array<string | undefined>
   fills: string[]
+  /** The input box's text: what fills put there, or what a test says Claude Code put back. */
+  draft: string
   submits: Array<Record<string, unknown>>
   compactions: number
   ran: string[]
@@ -60,6 +61,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     logs: [],
     statuses: [],
     fills: [],
+    draft: '',
     submits: [],
     compactions: 0,
     ran: [],
@@ -88,11 +90,6 @@ export function world(on: On, options: WorldOptions = {}): World {
     w.compactions += 1
     return (options.compactResult?.() ?? { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 }) as never
   })
-  on('fs.stat', () =>
-    options.transcriptMtime === undefined
-      ? { deny: 'no such file' }
-      : { value: { kind: 'file', size: 1, mtimeMs: options.transcriptMtime, isLink: false } },
-  )
   on('ui.log', ($, e) => {
     w.logs.push(e.text)
     return { value: undefined }
@@ -103,8 +100,10 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('prompt.fill', ($, e) => {
     w.fills.push(e.text)
+    w.draft = e.text
     return { isFilled: true } as never
   })
+  on('prompt.read', () => ({ value: { text: w.draft, cursor: w.draft.length } }) as never)
   on('prompt.submit', ($, e) => {
     if (e.origin?.kind === 'plugin') w.submits.push(e as Record<string, unknown>)
     return { text: e.text, ...(e.context ? { context: e.context } : {}) }

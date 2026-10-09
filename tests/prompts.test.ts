@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { T0, journalRows, start, world } from './harness.ts'
+import { SESSION_ID, T0, journalRows, respond, start, world } from './harness.ts'
 
 const HOUR = 3_600_000
 const typed = (text: string) => ({ text, origin: { kind: 'composer' }, wait: false }) as never
@@ -29,6 +29,25 @@ describe('heavy prompt', () => {
     expect(w.compactions).toBe(1)
     expect(w.submits).toEqual([expect.objectContaining({ text: 'next step', origin: expect.objectContaining({ kind: 'plugin', asUser: true }) })])
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ rule: 'prompt-context', answer: 'compact' })])
+  })
+
+  test('compact, then send takes the dropped prompt back out of the input box before sending it', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step' // Claude Code puts a dropped prompt back in the input box
+    await w.clock.settle()
+    expect(w.draft).toBe('')
+    expect(w.submits).toHaveLength(1)
+  })
+
+  test('compact, then send leaves a different draft in the input box', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step, and add tests'
+    await w.clock.settle()
+    expect(w.draft).toBe('next step, and add tests')
   })
 
   test('a compaction a hook vetoes puts the prompt back instead of sending it at full size', async ($, on) => {
@@ -89,26 +108,31 @@ describe('heavy prompt', () => {
 })
 
 describe('dormant resume', () => {
-  test('a heavy session idle for two hours asks before re-writing its cache', async ($, on) => {
-    const w = world(on, { answers: ['Send anyway'], contextTokens: 200_000, transcriptMtime: T0 - 2 * HOUR })
+  test('a heavy session resumed two hours after it was last active asks before re-writing its cache', async ($, on) => {
+    const w = world(on, { answers: ['Send anyway'], contextTokens: 200_000 })
     await start($, w, true)
+    await respond($, w, 200_000)
+    await $.session.end({ reason: 'exit' } as never)
+    await w.clock.advance(2 * HOUR)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
     expect(w.questions[0]).toBe('This session was idle for 2 h, so its prompt cache has likely expired and this request re-writes about 200k tokens. Send this prompt?')
   })
 
-  test('a light or recently active session is not asked', async ($, on) => {
-    const w = world(on, { contextTokens: 100_000, transcriptMtime: T0 - 2 * HOUR })
+  test('a light session, or one with no recorded response, is not asked', async ($, on) => {
+    const w = world(on, { contextTokens: 100_000, store: { [`last-active:${SESSION_ID}`]: T0 - 2 * HOUR } })
     await start($, w, true)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
+    w.store.delete(`last-active:${SESSION_ID}`)
     w.setContext(200_000)
+    expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
     expect(w.questions).toEqual([])
   })
 
   test('headless: one heavy dormant resume per window on the machine', async ($, on) => {
     const peer = { v: 2, at: T0 - 60_000, running: 0, starts: [], agentTokens: [], dormantResumes: [T0 - 60_000] }
-    const w = world(on, { contextTokens: 200_000, transcriptMtime: T0 - 2 * HOUR, store: { 'peer:other': peer } })
+    const w = world(on, { contextTokens: 200_000, store: { 'peer:other': peer, [`last-active:${SESSION_ID}`]: T0 - 2 * HOUR } })
     await start($, w, false)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     const result = (await $.prompt.submit(headless('continue'))) as Record<string, unknown>
