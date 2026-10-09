@@ -2,9 +2,9 @@
 // passes here before it starts.
 
 import type { Config } from './config.ts'
-import { type LimitReading, type LoopId, type PeerRecord, type SessionState, overrideCovers, runningAgents, tokensWithin, within } from './state.ts'
-import { count, duration, shortClock, tokens, windowName } from './text.ts'
-import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, join, refuse, sentence } from './verdict.ts'
+import { type LimitReading, type LoopId, type PeerRecord, type SessionState, countOnMachine, overrideCovers, runningAgents, tokensWithin } from './state.ts'
+import { count, duration, join, sentence, shortClock, tokens, windowName } from './text.ts'
+import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, refuse } from './verdict.ts'
 
 export type AgentRequest = {
   /** The loop asking for the agent. */
@@ -15,8 +15,8 @@ export type AgentRequest = {
   resume: boolean
 }
 
-export const AGENT_ALLOW = 'Allow'
-export const AGENT_REFUSE = "Don't start it"
+const AGENT_ALLOW = 'Allow'
+const AGENT_REFUSE = "Don't start it"
 
 export function agentGate(
   state: SessionState,
@@ -127,7 +127,7 @@ function agentTrips(
     })
   }
 
-  const starts = within(state.starts, now, window).length + peers.reduce((sum, p) => sum + within(p.starts, now, window).length, 0)
+  const starts = countOnMachine(state, peers, 'starts', now, window)
   if (starts >= config.rollingMax) {
     trips.push({
       rule: 'starts',

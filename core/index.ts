@@ -2,24 +2,14 @@
 // no clock: an adapter reports facts, asks for verdicts, and carries them out.
 // See docs/architecture.md for the contract an adapter keeps.
 
-export { AGENT_ALLOW, AGENT_REFUSE, type AgentRequest, agentGate, heldForQuestion, highestLimit, resolveAgentAsk } from './agents.ts'
+export { type AgentRequest, agentGate, heldForQuestion, highestLimit, resolveAgentAsk } from './agents.ts'
 export { type Command, DEFAULT_ALLOW_MINUTES, applyOverride, helpText, parseCommand, resumeGuard } from './commands.ts'
 export { type Config, SPECS, SWITCHES, defaultConfig, parseConfig } from './config.ts'
-export {
-  type JournalEvent,
-  type JournalRow,
-  expiredJournalKeys,
-  formatReport,
-  isJournalKey,
-  isJournalRow,
-  journalKey,
-  journalKeysSince,
-} from './journal.ts'
+export { type JournalEvent, type JournalRow, formatReport, isJournalRow, journalKey, splitJournalKeys } from './journal.ts'
 export { lockoutKind } from './lockout.ts'
 export {
   type SpawnFacts,
   type TokenUsage,
-  contextOf,
   expireAgents,
   observeAgentActive,
   observeAgentRunEnd,
@@ -36,9 +26,6 @@ export {
   reserveStart,
 } from './observe.ts'
 export {
-  PROMPT_CANCEL,
-  PROMPT_COMPACT,
-  PROMPT_SEND,
   type PromptOutcome,
   type PromptRequest,
   type PromptSource,
@@ -63,15 +50,5 @@ export {
 } from './state.ts'
 export { USAGE, statusLine, statusReport } from './status.ts'
 export { canonical, contextBucket, fingerprint } from './text.ts'
-export {
-  EXEMPT_TOOLS,
-  HEAVY_COMPACT,
-  HEAVY_CONTINUE,
-  HEAVY_STOP,
-  HEAVY_STOP_AGENT,
-  type HeavyOutcome,
-  type ToolRequest,
-  resolveHeavyAsk,
-  toolGate,
-} from './tools.ts'
-export { type Ask, type Family, HEADER, type Rule, SIGNATURE, type Verdict } from './verdict.ts'
+export { type HeavyOutcome, type ToolRequest, resolveHeavyAsk, toolGate } from './tools.ts'
+export { type Ask, type Deny, type Family, HEADER, type Rule, SIGNATURE, type Verdict } from './verdict.ts'

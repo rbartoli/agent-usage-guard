@@ -5,18 +5,20 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import {
+  type AgentRequest,
   type Ask,
   type Config,
+  DEFAULT_ALLOW_MINUTES,
+  type Deny,
   HEADER,
   type JournalRow,
   MAIN,
   type PeerRecord,
   type PromptSource,
-  type SessionState,
   SIGNATURE,
+  type SessionState,
   type ToolRequest,
   type Verdict,
-  DEFAULT_ALLOW_MINUTES,
   agentGate,
   applyOverride,
   canonical,
@@ -24,15 +26,12 @@ import {
   contextNote,
   defaultConfig,
   expireAgents,
-  expiredJournalKeys,
-  heldForQuestion,
   fingerprint,
   formatReport,
+  heldForQuestion,
   helpText,
-  isJournalKey,
   isJournalRow,
   journalKey,
-  journalKeysSince,
   livePeers,
   lockoutKind,
   markerScope,
@@ -59,6 +58,7 @@ import {
   resolveHeavyAsk,
   resolvePromptAsk,
   resumeGuard,
+  splitJournalKeys,
   statusLine,
   statusReport,
   toolGate,
@@ -260,58 +260,54 @@ export function register(on: On): void {
     if (context !== undefined && context >= Math.min(config.dormantContext, config.contextHard)) {
       await loadPeers($, now)
     }
-    const verdict = promptGate(session, peers, config, now, { source, text: e.text, idleMs: await idleTime($, now) })
+    const gate = async (at: number): Promise<Verdict> =>
+      promptGate(session, peers, config, at, { source, text: e.text, idleMs: await idleTime($, at) })
+    const send = (note: string | undefined) => (note ? next({ ...e, context: [...(e.context ?? []), note] }) : next(e))
+    const verdict = await gate(now)
     if (session.dormantResumes.at(-1) === now) await publish($, now)
     stopSeen = false
     session.reopened = false
 
-    if (verdict.kind === 'allow') {
-      return verdict.note ? next({ ...e, context: [...(e.context ?? []), verdict.note] }) : next(e)
-    }
+    if (verdict.kind === 'allow') return send(verdict.note)
     if (verdict.kind === 'drop') {
       await journal($, now, { ev: 'drop', rule: verdict.rule, ctx: contextBucket(context) })
       return { drop: verdict.message }
     }
     if (verdict.kind !== 'ask') return next(e)
 
-    await journal($, now, { ev: 'ask', rule: verdict.trips[0]?.rule, ctx: contextBucket(context) })
-    const { answer, unavailable } = await askUser($, verdict)
-    const answered = await $.clock.now()
-    if (unavailable) {
-      await journal($, answered, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: 'unavailable' })
-      const alone = promptGate(session, peers, config, answered, { source, text: e.text, idleMs: await idleTime($, answered) })
+    const asked = await askUser($, verdict, contextBucket(context))
+    if (asked.unavailable) {
+      await journalAnswer($, verdict, asked)
+      const alone = await gate(asked.at)
       if (alone.kind === 'drop') return { drop: alone.message }
-      return alone.kind === 'allow' && alone.note ? next({ ...e, context: [...(e.context ?? []), alone.note] }) : next(e)
+      return send(alone.kind === 'allow' ? alone.note : undefined)
     }
-    const outcome = resolvePromptAsk(session, verdict, answer)
-    await journal($, answered, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: answerKind(outcome.kind, answer) })
-    if (outcome.kind === 'allow') {
-      const note = contextNote(session, config)
-      return note ? next({ ...e, context: [...(e.context ?? []), note] }) : next(e)
-    }
+    const outcome = resolvePromptAsk(session, verdict, asked.answer)
+    await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
+    if (outcome.kind === 'allow') return send(contextNote(session, config))
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       $.clock.after(0, async () => {
         // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
-        if ((await $.prompt.read()).text === resend.text) await $.prompt.fill({ text: '' }).catch(() => undefined)
+        if ((await $.prompt.read()).text === resend.text) await fillInput($, '')
         // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
         if (failed !== undefined) {
           $.ui.log(`agent-usage-guard could not compact (${failed}), so your prompt is back in the input box.`)
-          await $.prompt.fill({ text: resend.text }).catch(() => undefined)
+          await fillInput($, resend.text)
           return
         }
         try {
           await $.prompt.submit({ ...resend, asUser: true })
         } catch (error) {
           $.ui.log(`agent-usage-guard could not resend your prompt: ${String(error)}`)
-          await $.prompt.fill({ text: resend.text }).catch(() => undefined)
+          await fillInput($, resend.text)
         }
       })
       return { drop: outcome.message }
     }
-    await $.prompt.fill({ text: e.text }).catch(() => undefined)
-    return { drop: outcome.kind === 'drop' ? outcome.message : 'agent-usage-guard: held this prompt.' }
+    await fillInput($, e.text)
+    return { drop: outcome.message }
   }).catch(($, e, next) => failOpen($, 'prompt.submit', next.error, () => next(e)))
 
   on('agent.spawn', async ($, e, next) => {
@@ -323,7 +319,7 @@ export function register(on: On): void {
     const request = { loop, depth: parentDepth + 1, resume: false }
     const { verdict, reservedAt } = await agentVerdict($, now, request)
     if (verdict.kind === 'deny') {
-      await journal($, await $.clock.now(), { ev: 'deny', rule: verdict.rule, tool: 'Agent', n: refusalNumber(verdict.message) })
+      await journalDenial($, verdict, 'Agent')
       return { deny: verdict.message }
     }
     let started: string | undefined
@@ -358,7 +354,7 @@ export function register(on: On): void {
       if (target) {
         const { verdict, reservedAt } = await agentVerdict($, now, { loop, depth: session.agents[target]!.depth, resume: true })
         if (verdict.kind === 'deny') {
-          await journal($, await $.clock.now(), { ev: 'deny', rule: verdict.rule, tool: 'SendMessage', n: refusalNumber(verdict.message) })
+          await journalDenial($, verdict, 'SendMessage')
           return { deny: verdict.message }
         }
         resumed = { id: target, reservedAt }
@@ -372,13 +368,7 @@ export function register(on: On): void {
       let verdict = toolGate(session, config, now, request)
       if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
       if (verdict.kind === 'deny') {
-        await journal($, await $.clock.now(), {
-          ev: 'deny',
-          rule: verdict.rule,
-          tool: e.tool,
-          ctx: contextBucket(session.loops[loop]?.context),
-          n: refusalNumber(verdict.message),
-        })
+        await journalDenial($, verdict, e.tool, contextBucket(session.loops[loop]?.context))
         return { deny: verdict.message }
       }
     }
@@ -420,6 +410,7 @@ export function register(on: On): void {
   }).catch(($, e, next) => ({ text: `The command failed: ${next.error?.message ?? 'unknown error'}` }))
 }
 
+/** Each variable is named in full, so `claude plugin validate` can list every one the mod reads. */
 async function loadConfig($: Api): Promise<void> {
   const parsed = parseConfig({
     AGENT_GUARD: await $.env.get('AGENT_GUARD'),
@@ -470,9 +461,9 @@ async function housekeeping($: Api): Promise<void> {
   try {
     const now = await $.clock.now()
     const keys = await $.store.keys()
-    const expired = expiredJournalKeys(keys, now, config.journalDays)
+    const { recent, expired } = splitJournalKeys(keys, now, config.journalDays)
     for (const key of expired) await $.store.delete(key)
-    const days = keys.filter((k) => isJournalKey(k) && !expired.includes(k)).sort()
+    const days = recent.sort()
     const sizes = await Promise.all(days.map(async (k) => JSON.stringify((await $.store.get(k)) ?? null).length))
     let total = sizes.reduce((sum, n) => sum + n, 0)
     for (let i = 0; total > JOURNAL_BUDGET_BYTES && i < days.length; i++) {
@@ -588,29 +579,58 @@ async function refreshStatus($: Api): Promise<void> {
   }
 }
 
-type Asked = { answer: string | undefined; unavailable: boolean }
+type Asked = { answer: string | undefined; unavailable: boolean; at: number }
 
 /**
- * Asks in Claude Code's own question dialog. `answer` is undefined when the
- * dialog came back without one: the user dismissed it. `unavailable` means the
- * question could not be asked at all, because the session has no
- * AskUserQuestion tool: from then on the session counts as one nobody can
- * answer, and the gate decides alone. Any other failure, such as the turn
- * being interrupted while the dialog was open, is not the user's answer: it
- * is rethrown, and the hook fails open.
+ * Journals a question and asks it in Claude Code's own question dialog.
+ * `answer` is undefined when the dialog came back without one: the user
+ * dismissed it. `unavailable` means the question could not be asked at all,
+ * because the session has no AskUserQuestion tool: from then on the session
+ * counts as one nobody can answer, and the gate decides alone. Any other
+ * failure, such as the turn being interrupted while the dialog was open, is
+ * not the user's answer: it is rethrown, and the hook fails open. `at` is when
+ * the question ended.
  */
-async function askUser($: Api, ask: Ask): Promise<Asked> {
+async function askUser($: Api, ask: Ask, ctx?: string): Promise<Asked> {
+  await journal($, await $.clock.now(), { ev: 'ask', rule: ask.trips[0]?.rule, ctx })
+  let answer: string | undefined
+  let unavailable = false
   try {
-    return { answer: await $.ui.ask(ask.question, { options: ask.options, header: HEADER }), unavailable: false }
+    answer = await $.ui.ask(ask.question, { options: ask.options, header: HEADER })
   } catch (error) {
     const text = String(error)
     if (/no tool named "AskUserQuestion"/.test(text)) {
       askUnavailable = true
       session.canAsk = false
-      return { answer: undefined, unavailable: true }
+      unavailable = true
+    } else if (!/\$\.ui\.ask: no answer\b/.test(text)) {
+      throw error
     }
-    if (/\$\.ui\.ask: no answer\b/.test(text)) return { answer: undefined, unavailable: false }
-    throw error
+  }
+  return { answer, unavailable, at: await $.clock.now() }
+}
+
+/** Journals how a question ended: the user's `choice`, a dismissal, or no dialog at all. */
+async function journalAnswer($: Api, ask: Ask, asked: Asked, choice?: string): Promise<void> {
+  const answer = asked.unavailable ? 'unavailable' : asked.answer === undefined ? 'dismiss' : choice
+  await journal($, asked.at, { ev: 'answer', rule: ask.trips[0]?.rule, answer })
+}
+
+/**
+ * One question per key at a time: a call that trips while its question is
+ * open is held back at once, and the model makes it again once it is
+ * answered. Waiting instead could outlast the hook's time limit.
+ */
+async function oneAtATime<T>(key: string, held: () => T, run: () => Promise<T>): Promise<T> {
+  // The check for an open question and the claim on it must not straddle an
+  // await, or two parallel calls would each ask.
+  if (pending.has(key)) return held()
+  const asking = run()
+  pending.set(key, asking)
+  try {
+    return await asking
+  } finally {
+    pending.delete(key)
   }
 }
 
@@ -623,71 +643,42 @@ async function compact($: Api): Promise<string | undefined> {
   }
 }
 
-/**
- * The agent gate, with one question at a time: calls that trip while a
- * question is open are held back at once, and the model starts them again
- * once it is answered. Waiting instead could outlast the hook's time limit.
- */
-async function agentVerdict(
-  $: Api,
-  start: number,
-  request: { loop: string; depth: number; resume: boolean },
-): Promise<{ verdict: Verdict; reservedAt?: number }> {
-  const now = start
+/** A verdict on an agent, and the slot it holds when allowed, for `releaseStart`. */
+type AgentVerdict = { verdict: Verdict; reservedAt?: number }
+
+/** The agent gate, asking at most one question about agents at a time. */
+async function agentVerdict($: Api, now: number, request: AgentRequest): Promise<AgentVerdict> {
   await loadPeers($, now)
   expireAgents(session, now, config.peerTtlMs)
   prune(session, now, config.windowMs)
   const verdict = agentGate(session, peers, config, now, request)
   if (verdict.kind === 'allow') return { verdict, reservedAt: reserveStart(session, now) }
   if (verdict.kind !== 'ask') return { verdict }
-  // The check for an open question and the claim on it must not straddle an
-  // await, or two parallel calls would each ask.
-  if (pending.has('agents')) return { verdict: heldForQuestion('agents') }
-  const asked = (async (): Promise<{ verdict: Verdict; reservedAt?: number }> => {
-    await journal($, now, { ev: 'ask', rule: verdict.trips[0]?.rule })
-    const { answer, unavailable } = await askUser($, verdict)
-    const answeredAt = await $.clock.now()
-    const resolved = unavailable
-      ? agentGate(session, peers, config, answeredAt, request)
-      : resolveAgentAsk(session, config, answeredAt, verdict, answer)
-    const reservedAt = resolved.kind === 'allow' ? reserveStart(session, answeredAt) : undefined
-    await journal($, answeredAt, { ev: 'answer', rule: verdict.trips[0]?.rule, answer: unavailable ? 'unavailable' : answer === undefined ? 'dismiss' : resolved.kind === 'allow' ? 'allow' : 'refuse' })
+  return oneAtATime<AgentVerdict>('agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
+    const asked = await askUser($, verdict)
+    const resolved = asked.unavailable
+      ? agentGate(session, peers, config, asked.at, request)
+      : resolveAgentAsk(session, config, asked.at, verdict, asked.answer)
+    const reservedAt = resolved.kind === 'allow' ? reserveStart(session, asked.at) : undefined
+    await journalAnswer($, verdict, asked, resolved.kind === 'allow' ? 'allow' : 'refuse')
     await refreshStatus($)
     return { verdict: resolved, ...(reservedAt === undefined ? {} : { reservedAt }) }
-  })()
-  pending.set('agents', asked)
-  try {
-    return await asked
-  } finally {
-    pending.delete('agents')
-  }
+  })
 }
 
-/** A heavy-context question, one per loop at a time; calls meanwhile are held back. */
+/** The heavy-context question, one per loop at a time. */
 async function settleHeavy($: Api, ask: Ask, request: ToolRequest): Promise<Verdict> {
-  const key = `heavy:${ask.loop}`
-  if (pending.has(key)) return heldForQuestion('heavy')
-  const asked = (async (): Promise<Verdict> => {
-    const now = await $.clock.now()
-    await journal($, now, { ev: 'ask', rule: 'tool-budget', ctx: contextBucket(session.loops[ask.loop]?.context) })
-    const { answer, unavailable } = await askUser($, ask)
-    const answeredAt = await $.clock.now()
-    if (unavailable) {
-      await journal($, answeredAt, { ev: 'answer', rule: 'tool-budget', answer: 'unavailable' })
-      return toolGate(session, config, answeredAt, request)
+  return oneAtATime(`heavy:${ask.loop}`, () => heldForQuestion('heavy'), async () => {
+    const asked = await askUser($, ask, contextBucket(session.loops[ask.loop]?.context))
+    if (asked.unavailable) {
+      await journalAnswer($, ask, asked)
+      return toolGate(session, config, asked.at, request)
     }
-    const outcome = resolveHeavyAsk(session, config, answeredAt, ask, answer)
+    const outcome = resolveHeavyAsk(session, config, asked.at, ask, asked.answer)
     if (outcome.compactAfterTurn) compactAfterTurn = true
-    const kind = answer === undefined ? 'dismiss' : outcome.compactAfterTurn ? 'compact' : outcome.verdict.kind === 'allow' ? 'allow' : 'refuse'
-    await journal($, answeredAt, { ev: 'answer', rule: 'tool-budget', answer: kind })
+    await journalAnswer($, ask, asked, outcome.compactAfterTurn ? 'compact' : outcome.verdict.kind === 'allow' ? 'allow' : 'refuse')
     return outcome.verdict
-  })()
-  pending.set(key, asked)
-  try {
-    return await asked
-  } finally {
-    pending.delete(key)
-  }
+  })
 }
 
 /** The agent a plain-text SendMessage would resume: a finished subagent of this session. */
@@ -705,17 +696,14 @@ function argumentsOf(e: Readonly<Record<string, unknown>>): Record<string, unkno
   return { tool: e.tool, args }
 }
 
-/** The ladder rung a refusal's text carries, for the journal. */
-function refusalNumber(message: string): number | undefined {
-  const match = /refusal (\d+) at/.exec(message)
-  return match ? Number(match[1]) : undefined
+/** Puts `text` in the input box; a failure leaves the box as it was. */
+async function fillInput($: Api, text: string): Promise<void> {
+  await $.prompt.fill({ text }).catch(() => undefined)
 }
 
-function answerKind(outcome: string, answer: string | undefined): string {
-  if (answer === undefined) return 'dismiss'
-  if (outcome === 'compact-then-send') return 'compact'
-  if (outcome === 'allow') return 'allow'
-  return 'cancel'
+/** Journals a refusal the model reads. */
+async function journalDenial($: Api, verdict: Deny, tool: string, ctx?: string): Promise<void> {
+  await journal($, await $.clock.now(), { ev: 'deny', rule: verdict.rule, tool, ctx, n: verdict.n })
 }
 
 /** Appends a row to this session's journal key for the day. Never throws. */
@@ -738,8 +726,8 @@ async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): P
 
 async function report($: Api, now: number, days: number): Promise<string> {
   try {
-    const keys = journalKeysSince((await $.store.keys()).filter(isJournalKey), now, days)
-    const rows = (await Promise.all(keys.map((k) => $.store.get(k)))).flatMap((v) => (Array.isArray(v) ? v.filter(isJournalRow) : []))
+    const { recent } = splitJournalKeys(await $.store.keys(), now, days)
+    const rows = (await Promise.all(recent.map((k) => $.store.get(k)))).flatMap((v) => (Array.isArray(v) ? v.filter(isJournalRow) : []))
     return formatReport(rows, now, days)
   } catch (error) {
     return `agent-usage-guard could not read its journal: ${String(error)}`

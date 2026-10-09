@@ -2,7 +2,7 @@
 // crossing and lockout. Rows hold rule names, tool names, coarse buckets and
 // times, never prompt text, tool inputs or model output.
 
-import { duration, windowName } from './text.ts'
+import { count, duration, windowName } from './text.ts'
 
 export type JournalEvent =
   | 'ask' // the guard asked the user
@@ -19,7 +19,7 @@ export type JournalRow = {
   s: string
   ev: JournalEvent
   rule?: string
-  /** For `answer`: allow, refuse, compact, cancel, dismiss or other. */
+  /** For `answer`: allow, compact, refuse, cancel or dismiss, or unavailable when the question could not be shown. */
   answer?: string
   tool?: string
   ctx?: string
@@ -38,33 +38,21 @@ export function journalKey(sessionId: string, now: number): string {
   return `${KEY_PREFIX}${new Date(now).toISOString().slice(0, 10)}:${sessionId}`
 }
 
-export function isJournalKey(key: string): boolean {
-  return key.startsWith(KEY_PREFIX)
-}
-
-function keyDay(key: string): number | undefined {
-  const day = Date.parse(key.slice(KEY_PREFIX.length, KEY_PREFIX.length + 10))
-  return Number.isNaN(day) ? undefined : day
-}
-
-/** Keys whose day is older than the retention. */
-export function expiredJournalKeys(keys: readonly string[], now: number, days: number): string[] {
-  const cutoff = now - days * DAY_MS
-  return keys.filter((key) => {
-    if (!isJournalKey(key)) return false
-    const day = keyDay(key)
-    return day !== undefined && day + DAY_MS < cutoff
-  })
-}
-
-/** Keys that can hold rows from the last `days` days. */
-export function journalKeysSince(keys: readonly string[], now: number, days: number): string[] {
-  const cutoff = now - days * DAY_MS
-  return keys.filter((key) => {
-    if (!isJournalKey(key)) return false
-    const day = keyDay(key)
-    return day !== undefined && day + DAY_MS >= cutoff
-  })
+/**
+ * Picks the journal's keys out of the store's and splits them by age: `recent`
+ * days can hold rows from the last `days` days, `expired` days ended before
+ * those began.
+ */
+export function splitJournalKeys(keys: readonly string[], now: number, days: number): { recent: string[]; expired: string[] } {
+  const start = now - days * DAY_MS
+  const split = { recent: [] as string[], expired: [] as string[] }
+  for (const key of keys) {
+    if (!key.startsWith(KEY_PREFIX)) continue
+    const day = Date.parse(key.slice(KEY_PREFIX.length, KEY_PREFIX.length + 10))
+    if (Number.isNaN(day)) continue
+    split[day + DAY_MS < start ? 'expired' : 'recent'].push(key)
+  }
+  return split
 }
 
 export function isJournalRow(value: unknown): value is JournalRow {
@@ -78,13 +66,13 @@ type RuleCount = { asks: number; allowed: number; declined: number; denials: num
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
   const recent = rows.filter((r) => now - r.t < days * DAY_MS).sort((a, b) => a.t - b.t)
-  const lines = [`agent-usage-guard report: last ${days} day${days === 1 ? '' : 's'}`]
+  const lines = [`agent-usage-guard report: last ${count(days, 'day')}`]
   if (recent.length === 0) {
     lines.push('', 'Nothing recorded yet. The journal fills as the guard asks, refuses, or sees a limit.')
     return lines.join('\n')
   }
   const sessions = new Set(recent.map((r) => r.s)).size
-  lines.push(`${recent.length} events from ${sessions} session${sessions === 1 ? '' : 's'}`)
+  lines.push(`${count(recent.length, 'event')} from ${count(sessions, 'session')}`)
 
   const lockouts = recent.filter((r) => r.ev === 'lockout' && r.kind !== 'model')
   const modelScoped = recent.filter((r) => r.ev === 'lockout' && r.kind === 'model').length
@@ -112,7 +100,10 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
     if (row.ev === 'ask') bump(row.rule, 'asks')
     else if (row.ev === 'deny') bump(row.rule, 'denials')
     else if (row.ev === 'drop') bump(row.rule, 'drops')
-    else if (row.ev === 'answer') bump(row.rule, row.answer === 'allow' || row.answer === 'compact' ? 'allowed' : 'declined')
+    // A question that could not be shown was neither allowed nor declined.
+    else if (row.ev === 'answer' && row.answer !== 'unavailable') {
+      bump(row.rule, row.answer === 'allow' || row.answer === 'compact' ? 'allowed' : 'declined')
+    }
   }
   if (perRule.size > 0) {
     lines.push('', 'By rule (asks: allowed / declined · refusals to the model · prompts held)')

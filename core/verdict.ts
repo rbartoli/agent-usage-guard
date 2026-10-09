@@ -37,7 +37,8 @@ export type Trip = {
 export type Family = 'agents' | 'heavy' | 'prompt'
 
 export type Allow = { kind: 'allow'; note?: string }
-export type Deny = { kind: 'deny'; rule: Rule; message: string }
+/** `n` is which refusal of the condition this is; a call only held back has none. */
+export type Deny = { kind: 'deny'; rule: Rule; message: string; n?: number }
 export type Drop = { kind: 'drop'; rule: Rule; message: string }
 export type Ask = {
   kind: 'ask'
@@ -47,7 +48,6 @@ export type Ask = {
   question: string
   options: readonly string[]
 }
-export type CompactThenSend = { kind: 'compact-then-send'; rule: Rule; message: string }
 
 export type Verdict = Allow | Deny | Drop | Ask
 
@@ -99,16 +99,5 @@ export function refuse(
     }
   }
   parts.push(`[${SIGNATURE} · refusal ${n} at ${clock(now)}]`)
-  return { kind: 'deny', rule, message: parts.join(' ') }
-}
-
-/** Lists details as prose: "a", "a and b", "a, b and c". */
-export function join(details: readonly string[]): string {
-  if (details.length <= 1) return details.join('')
-  return `${details.slice(0, -1).join(', ')} and ${details.at(-1)}`
-}
-
-/** Capitalises the first letter of a sentence assembled from parts. */
-export function sentence(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1)
+  return { kind: 'deny', rule, message: parts.join(' '), n }
 }

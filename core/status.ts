@@ -3,19 +3,13 @@
 
 import { highestLimit } from './agents.ts'
 import type { Config } from './config.ts'
-import { MAIN, type PeerRecord, type Scope, type SessionState, runningAgents, within } from './state.ts'
-import { duration, shortClock, tokens, windowName } from './text.ts'
+import { MAIN, type PeerRecord, type Scope, type SessionState, countOnMachine, runningAgents } from './state.ts'
+import { count, duration, shortClock, tokens, windowName } from './text.ts'
 
 /** The line under the prompt, or undefined when there is nothing to say. */
 export function statusLine(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): string | undefined {
   if (!config.enabled) return undefined
-  const parts: string[] = []
-  if (state.override && now < state.override.until) {
-    parts.push(`${scopeName(state.override.scope)} lifted until ${shortClock(state.override.until)}`)
-  }
-  if (state.fuseUntil !== undefined && now < state.fuseUntil) {
-    parts.push(`agent spawns paused until ${shortClock(state.fuseUntil)}`)
-  }
+  const parts = liftedOrPaused(state, now)
   const limit = highestLimit(state, peers, now)
   if (limit && limit.percent >= config.limitDenyPercent) {
     parts.push(`${windowName(limit.kind)} window ${limit.percent}%: new agents refused`)
@@ -29,6 +23,18 @@ export function statusLine(state: SessionState, peers: readonly PeerRecord[], co
     parts.push(`context ${tokens(context)}`)
   }
   return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
+/** What is lifted or paused now, worded alike in the status line and the report. */
+function liftedOrPaused(state: SessionState, now: number): string[] {
+  const parts: string[] = []
+  if (state.override && now < state.override.until) {
+    parts.push(`${scopeName(state.override.scope)} lifted until ${shortClock(state.override.until)}`)
+  }
+  if (state.fuseUntil !== undefined && now < state.fuseUntil) {
+    parts.push(`agent spawns paused until ${shortClock(state.fuseUntil)}`)
+  }
+  return parts
 }
 
 export function scopeName(scope: Scope): string {
@@ -49,12 +55,10 @@ export function statusReport(
   const window = config.windowMs
   const lines = ['On.']
 
-  const running = runningAgents(state)
   const peerRunning = peers.reduce((sum, p) => sum + p.running, 0)
-  const starts = within(state.starts, now, window).length
-  const peerStarts = peers.reduce((sum, p) => sum + within(p.starts, now, window).length, 0)
+  const starts = countOnMachine(state, peers, 'starts', now, window)
   lines.push(
-    `Agents: ${running} running here, ${peerRunning} in ${peers.length} other session${peers.length === 1 ? '' : 's'} (limit ${config.agentMax}); ${starts + peerStarts} started in the last ${duration(window)} (limit ${config.rollingMax}).`,
+    `Agents: ${runningAgents(state)} running here, ${peerRunning} in ${count(peers.length, 'other session')} (limit ${config.agentMax}); ${starts} started in the last ${duration(window)} (limit ${config.rollingMax}).`,
   )
 
   const limits = Object.values(state.limits).filter((r) => r.resetsAt === undefined || r.resetsAt > now)
@@ -72,9 +76,7 @@ export function statusReport(
     `Context: ${context === undefined ? 'unknown until the next response' : `${tokens(context)} tokens`} (warn ${tokens(config.contextWarn)}, ask before a prompt from ${tokens(config.contextHard)}).`,
   )
 
-  const held: string[] = []
-  if (state.override && now < state.override.until) held.push(`${scopeName(state.override.scope)} lifted until ${shortClock(state.override.until)}`)
-  if (state.fuseUntil !== undefined && now < state.fuseUntil) held.push(`agent fuse burning until ${shortClock(state.fuseUntil)}`)
+  const held = liftedOrPaused(state, now)
   for (const [key, until] of Object.entries(state.leases)) {
     if (now < until) held.push(`${key} approved${until < Number.MAX_SAFE_INTEGER ? ` until ${shortClock(until)}` : ' until the context shrinks'}`)
   }

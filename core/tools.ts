@@ -4,14 +4,14 @@
 
 import type { Config } from './config.ts'
 import { type LoopId, MAIN, type SessionState, loopOf, overrideCovers, within } from './state.ts'
-import { count, duration, shortClock, tokens } from './text.ts'
-import { ALLOW, type Ask, type Verdict, refuse } from './verdict.ts'
+import { count, duration, sentence, shortClock, tokens } from './text.ts'
+import { ALLOW, type Ask, type Deny, type Verdict, refuse } from './verdict.ts'
 
 /**
  * Tools the guard never holds: holding them loses a subagent's report, stops
  * a cleanup, or blocks the user from answering a question.
  */
-export const EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+const EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'SubagentHandback',
   'TaskStop',
   'AskUserQuestion',
@@ -27,12 +27,12 @@ export type ToolRequest = {
 }
 
 /** How long "keep going" lasts if the loop never compacts. */
-export const HEAVY_LEASE_MS = 60 * 60 * 1000
+const HEAVY_LEASE_MS = 60 * 60 * 1000
 
-export const HEAVY_CONTINUE = 'Keep going'
-export const HEAVY_COMPACT = 'Compact after this turn'
-export const HEAVY_STOP = 'Stop this turn'
-export const HEAVY_STOP_AGENT = 'Stop this agent'
+const HEAVY_CONTINUE = 'Keep going'
+const HEAVY_COMPACT = 'Compact after this turn'
+const HEAVY_STOP = 'Stop this turn'
+const HEAVY_STOP_AGENT = 'Stop this agent'
 
 export function toolGate(state: SessionState, config: Config, now: number, request: ToolRequest): Verdict {
   if (!config.enabled || EXEMPT_TOOLS.has(request.tool)) return ALLOW
@@ -45,10 +45,7 @@ export function toolGate(state: SessionState, config: Config, now: number, reque
   }
 
   const loop = loopOf(state, request.loop)
-  if (loop.stopped) {
-    const base = `The user stopped this ${request.loop === MAIN ? 'turn' : 'agent'} at ${tokens(loop.context ?? 0)} context tokens. ${request.loop === MAIN ? 'End the turn now and recommend /compact before the next task.' : 'Stop working and report back what you have.'}`
-    return refuse(state, config, now, 'stopped', `stopped:${request.loop}`, base, false)
-  }
+  if (loop.stopped) return refuseStopped(state, config, now, request.loop)
 
   const context = loop.context
   if (lifted || context === undefined || context < config.toolContext) return ALLOW
@@ -62,7 +59,7 @@ export function toolGate(state: SessionState, config: Config, now: number, reque
 
   const detail = `${request.label} made ${count(heavy.length, 'tool call')} in the last ${duration(config.windowMs)} above ${tokens(config.toolContext)} context tokens, and each one re-reads the ${tokens(context)}`
   if (!state.canAsk) {
-    const base = `${detail.charAt(0).toUpperCase()}${detail.slice(1)}. Nobody can approve more in this session. ${request.loop === MAIN ? 'End the turn; the session needs /compact.' : 'Finish with what you have and report back.'}`
+    const base = `${sentence(detail)}. Nobody can approve more in this session. ${request.loop === MAIN ? 'End the turn; the session needs /compact.' : 'Finish with what you have and report back.'}`
     return refuse(state, config, now, 'tool-budget', `tool-budget:${request.loop}`, base, false)
   }
   return {
@@ -70,7 +67,7 @@ export function toolGate(state: SessionState, config: Config, now: number, reque
     family: 'heavy',
     loop: request.loop,
     trips: [{ rule: 'tool-budget', detail, leaseKey: `heavy:${request.loop}`, leaseUntil: now + HEAVY_LEASE_MS }],
-    question: `${detail.charAt(0).toUpperCase()}${detail.slice(1)}. Keep working at ${tokens(context)} context?`,
+    question: `${sentence(detail)}. Keep working at ${tokens(context)} context?`,
     options: request.loop === MAIN ? [HEAVY_CONTINUE, HEAVY_COMPACT, HEAVY_STOP] : [HEAVY_CONTINUE, HEAVY_STOP_AGENT],
   }
 }
@@ -92,11 +89,15 @@ export function resolveHeavyAsk(
     return { verdict: ALLOW, compactAfterTurn: answer === HEAVY_COMPACT }
   }
   loop.stopped = true
-  const isMain = ask.loop === MAIN
-  const said =
-    answer === undefined || answer === HEAVY_STOP || answer === HEAVY_STOP_AGENT
-      ? `The user stopped this ${isMain ? 'turn' : 'agent'}`
-      : `The user answered "${answer}"`
-  const base = `${said} at ${tokens(loop.context ?? 0)} context tokens. ${isMain ? 'End the turn now and recommend /compact before the next task.' : 'Stop working and report back what you have.'}`
-  return { verdict: refuse(state, config, now, 'stopped', `stopped:${ask.loop}`, base, false), compactAfterTurn: false }
+  const typed = answer === undefined || answer === HEAVY_STOP || answer === HEAVY_STOP_AGENT ? undefined : answer
+  return { verdict: refuseStopped(state, config, now, ask.loop, typed), compactAfterTurn: false }
+}
+
+/** Refuses a call in a loop the user stopped; `typed` is what they wrote in place of choosing. */
+function refuseStopped(state: SessionState, config: Config, now: number, loop: LoopId, typed?: string): Deny {
+  const isMain = loop === MAIN
+  const said = typed === undefined ? `The user stopped this ${isMain ? 'turn' : 'agent'}` : `The user answered "${typed}"`
+  const next = isMain ? 'End the turn now and recommend /compact before the next task.' : 'Stop working and report back what you have.'
+  const base = `${said} at ${tokens(loopOf(state, loop).context ?? 0)} context tokens. ${next}`
+  return refuse(state, config, now, 'stopped', `stopped:${loop}`, base, false)
 }
