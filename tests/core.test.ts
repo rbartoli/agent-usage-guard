@@ -166,6 +166,25 @@ describe('journal', () => {
     expect(text).toMatch(/Overrides: 1 \(agents 1\)/)
   })
 
+  test('lockouts count once per locked window, however many sessions and retries hit it', () => {
+    const HOUR = DAY / 24
+    const lockout = (ago: number, s: string, resets?: number) => ({ t: NOW - ago, s, ev: 'lockout' as const, kind: 'five_hour', ...(resets ? { resets } : {}) })
+    const rows = [
+      // Rows from before reset times were recorded: one run, then a second after a long gap.
+      lockout(3 * DAY, 'a'),
+      lockout(3 * DAY - 20 * 60_000, 'b'),
+      lockout(2 * DAY, 'a'),
+      // One window that two sessions hit and one retried an hour later, then the next window.
+      lockout(9 * HOUR, 'a', NOW - 7 * HOUR),
+      lockout(9 * HOUR - 60_000, 'b', NOW - 7 * HOUR),
+      lockout(8 * HOUR, 'a', NOW - 7 * HOUR),
+      lockout(3 * HOUR, 'a', NOW + 2 * HOUR),
+    ]
+    expect(formatReport(rows, NOW, 7)).toMatch(/Usage-limit lockouts: 4 \(4\.0 per week\)/)
+    // Under a week there is no rate to give: it would be the count again.
+    expect(formatReport(rows, NOW, 2)).toMatch(/Usage-limit lockouts: 2\n/)
+  })
+
   test('an empty journal says so', () => {
     expect(formatReport([], NOW, 7)).toMatch(/Nothing recorded yet/)
   })

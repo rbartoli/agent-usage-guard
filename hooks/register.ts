@@ -166,8 +166,11 @@ export function register(on: On): void {
       const text = `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}`
       const kind = lockoutKind(e.error, text, Object.values(session.limits))
       if (kind) {
+        const now = await $.clock.now()
         const reading = session.limits[kind]
-        await journal($, await $.clock.now(), { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}) })
+        // A current reading's reset time names the window, so the report counts each lockout once.
+        const resets = reading?.resetsAt !== undefined && reading.resetsAt > now ? reading.resetsAt : undefined
+        await journal($, now, { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}), ...(resets === undefined ? {} : { resets }) })
       }
     }
     return next(e)

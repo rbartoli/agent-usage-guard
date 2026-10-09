@@ -103,7 +103,7 @@ Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p
 /agent-guard report 30
 ```
 
-The report counts usage-limit lockouts per week, plan-window threshold crossings, and every question and refusal by rule, with what you answered. It reads every session's journal on this machine and never leaves it. Set `AGENT_GUARD_JOURNAL=0` to stop recording.
+The report counts usage-limit lockouts (each locked window once), plan-window threshold crossings, and every question and refusal by rule, with what you answered. It reads every session's journal on this machine and never leaves it. Set `AGENT_GUARD_JOURNAL=0` to stop recording.
 
 ## Security and privacy
 

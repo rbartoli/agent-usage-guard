@@ -26,12 +26,16 @@ export type JournalRow = {
   /** Plan-window percentage, for `limit` and `lockout`. */
   pct?: number
   kind?: string
+  /** For `lockout`: when the window that locked resets, from a current reading of it. */
+  resets?: number
   /** For `deny`: which refusal of the condition this was. */
   n?: number
 }
 
 const KEY_PREFIX = 'journal:'
 const DAY_MS = 86_400_000
+/** Lockout rows with no reset time belong to one lockout while less than an hour apart. */
+const LOCKOUT_GAP_MS = 3_600_000
 
 /** Each session appends only to its own key for the day, so sessions never overwrite each other. */
 export function journalKey(sessionId: string, now: number): string {
@@ -74,10 +78,11 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
   const sessions = new Set(recent.map((r) => r.s)).size
   lines.push(`${count(recent.length, 'event')} from ${count(sessions, 'session')}`)
 
-  const lockouts = recent.filter((r) => r.ev === 'lockout' && r.kind !== 'model')
+  const lockouts = lockedWindows(recent.filter((r) => r.ev === 'lockout' && r.kind !== 'model'))
   const modelScoped = recent.filter((r) => r.ev === 'lockout' && r.kind === 'model').length
-  const weeks = Math.max(days / 7, 1)
-  lines.push('', `Usage-limit lockouts: ${lockouts.length} (${(lockouts.length / weeks).toFixed(1)} per week)`)
+  // Only a span of a week or more gives a weekly rate; a shorter one would extrapolate.
+  const rate = days >= 7 ? ` (${(lockouts.length / (days / 7)).toFixed(1)} per week)` : ''
+  lines.push('', `Usage-limit lockouts: ${lockouts.length}${rate}`)
   for (const row of lockouts.slice(-5)) {
     lines.push(`  ${stamp(row.t)}${row.kind && row.kind !== 'unknown' ? ` · ${windowName(row.kind)} window` : ''}`)
   }
@@ -129,6 +134,27 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
 
   lines.push('', `Span: ${stamp(recent[0]!.t)} to ${stamp(recent.at(-1)!.t)} (${duration(recent.at(-1)!.t - recent[0]!.t)})`)
   return lines.join('\n')
+}
+
+/**
+ * The first row of each locked window. Rows with the same reset time are one
+ * window, whichever session hit it and however often; a row without one, from
+ * an older version or a session with no current reading, joins the row before
+ * it unless an hour or more separates them.
+ */
+function lockedWindows(lockouts: readonly JournalRow[]): JournalRow[] {
+  const firsts: JournalRow[] = []
+  const previous = new Map<string, JournalRow>()
+  for (const row of lockouts) {
+    const kind = row.kind ?? 'unknown'
+    const before = previous.get(kind)
+    previous.set(kind, row)
+    const same =
+      before !== undefined &&
+      (row.resets !== undefined && before.resets !== undefined ? row.resets === before.resets : row.t - before.t < LOCKOUT_GAP_MS)
+    if (!same) firsts.push(row)
+  }
+  return firsts
 }
 
 function total(c: RuleCount): number {

@@ -46,7 +46,7 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 | Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
 | Overrides | `/agent-guard allow`, `resume`, the old markers sent alone, and the off switch |
 | Status line | Redrawn when a plan window it shows resets or an allow ends, in a session where nothing else happens |
-| Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
+| Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; each locked window counted once, across sessions and retries; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
 
 ## What is checked by hand
 
