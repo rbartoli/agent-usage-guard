@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **An agent in a long tool call stays counted.** The 15-minute expiry for
+  agents whose end was never reported also caught a live agent blocked in one
+  tool, such as a test suite, and nothing counted it again, so one more agent
+  could start past the concurrency limit. An agent with a tool call running is
+  never expired now, and any agent that makes a request counts as running again.
+- **Only a dismissed question counts as a no.** Any other failure of the
+  question dialog, such as the turn being interrupted while it was open, was
+  read as the user declining: agents were refused for 10 minutes and the
+  refusal fed the fuse. Such a failure now fails open.
+- **"Compact, then send" never sends at full size.** When compaction failed,
+  or a hook vetoed it, the prompt was resent anyway, past the 500k gate. It now
+  goes back into the input box with the reason.
+- **Notifications leave the context warning for you.** A background task's
+  notification above 300k used up the one-time warning, so your own next
+  prompt never carried it.
+- **Other sessions' subagent tokens age out with the window.** Each session
+  published one total that counted for as long as its record lived (15
+  minutes, against a 10-minute budget). Records now carry tokens per minute
+  (peer record version 2); a session still running an older version is not
+  counted until it reloads.
+- **A context reading below 400k clears the heavy-context budget.** It revoked
+  "Keep going" but kept the call history, so the next heavy call asked again.
+- **A `/subtask` fork is counted while a gated agent is starting.** It was
+  ignored whenever an agent spawn was pending.
+
 ## 1.0.0 — 2026-10-07
 
 Rebuilt as a Claude Code mod (Claude Code v2.1.287 or later). The Python command
