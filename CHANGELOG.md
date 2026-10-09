@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **"Compact, then send" empties the input box when the put-back is late.**
+  The guard took the prompt out of the box only once, at the start of the
+  compaction. If Claude Code put it back after that, it stayed in the box after
+  being sent (seen on 2.1.295 with a plain "merge"). The guard now checks again
+  right before it resends the prompt.
 - **An icon for the plugin directory listing**: a shield with a pause sign.
 - **The listing's links point here.** The directory filled Support and
   Documentation from the first matching README links, an Anthropic issue and

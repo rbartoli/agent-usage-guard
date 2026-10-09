@@ -42,6 +42,22 @@ describe('heavy prompt', () => {
     expect(w.submits).toHaveLength(1)
   })
 
+  test('compact, then send takes the prompt back out when Claude Code puts it back late', async ($, on) => {
+    const w = world(on, {
+      answers: ['Compact, then send'],
+      contextTokens: 520_000,
+      compactResult: () => {
+        w.draft = 'merge' // the put-back lands after the guard first looked
+        return { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 }
+      },
+    })
+    await start($, w, true)
+    await $.prompt.submit(typed('merge'))
+    await w.clock.settle()
+    expect(w.draft).toBe('')
+    expect(w.submits).toHaveLength(1)
+  })
+
   test('compact, then send leaves a different draft in the input box', async ($, on) => {
     const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
     await start($, w, true)
