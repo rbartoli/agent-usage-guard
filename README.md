@@ -33,7 +33,7 @@ Then run `/agent-guard` to see what it sees. Mods are on by default; the [overvi
 
 ## Why this exists
 
-One afternoon I gave Claude Code a research prompt at max effort. It spawned **394 subagent calls, 341 of them running at once, and pushed 84M context tokens through the API in ten minutes.** Session over: *"Claude usage limit reached."* Locked out mid-workday.
+One afternoon I gave Claude Code a research prompt at max effort. It spawned **394 subagent calls, 341 of them running at once, and pushed 84M context tokens through the API in ten minutes.** Session over: *"Claude usage limit reached."* Locked out until the window reset.
 
 That wasn't a one-off. Sixty days of my own logs held **12 lockouts** and 166 ten-minute windows with agent bursts. The failure mode multiplies: *a large context × rapid tool loops × parallel agents × blind retries*. Each protection below removes one factor.
 
