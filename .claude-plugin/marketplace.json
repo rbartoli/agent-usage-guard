@@ -6,7 +6,7 @@
     {
       "name": "agent-usage-guard",
       "source": "./",
-      "description": "Plan-aware agent gates, context gates and loop fuses that ask before spending your usage window."
+      "description": "A Claude Code mod that holds subagent fan-out, heavy-context prompts and retry loops before they spend your usage window. It reads your plan's usage, counts agents across every session, and asks in Claude Code's own dialog."
     }
   ]
 }
