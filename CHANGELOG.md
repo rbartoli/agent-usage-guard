@@ -3,6 +3,11 @@
 ## Unreleased
 
 - **An icon for the plugin directory listing**: a shield with a pause sign.
+- **The listing's links point here.** The directory filled Support and
+  Documentation from the first matching README links, an Anthropic issue and
+  Claude Code's mod docs. `plugin.json` now names this repository's issues,
+  its README, and the README's Security and privacy section as the privacy
+  policy.
 - **Installs no longer copy the demo GIF.** The README shows the 2.9 MB GIF
   from the v1.0.0 release instead of the repository, and `demo/render.sh`
   writes it to `demo/out/`.

@@ -7,5 +7,8 @@
   "repository": "https://github.com/rbartoli/agent-usage-guard",
   "license": "MIT",
   "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/rbartoli/agent-usage-guard#readme",
+  "supportUrl": "https://github.com/rbartoli/agent-usage-guard/issues",
+  "privacyPolicyUrl": "https://github.com/rbartoli/agent-usage-guard#security-and-privacy",
   "keywords": ["mod", "usage", "rate-limit", "subagents", "context", "guardrails", "cost"]
 }
