@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The README demo shows four scenes** (a cold cache, parallel agents, a heavy-context
+  loop and the subagent token budget), recorded from Claude Code against a scripted
+  local API so it needs no account and spends no usage: `demo/render.sh`.
 - **An agent in a long tool call stays counted.** The 15-minute expiry for
   agents whose end was never reported also caught a live agent blocked in one
   tool, such as a test suite, and nothing counted it again, so one more agent
