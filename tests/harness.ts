@@ -37,6 +37,8 @@ export type World = {
   logs: string[]
   statuses: Array<string | undefined>
   fills: string[]
+  /** The input box's text: what fills put there, or what a test says Claude Code put back. */
+  draft: string
   submits: Array<Record<string, unknown>>
   compactions: number
   ran: string[]
@@ -59,6 +61,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     logs: [],
     statuses: [],
     fills: [],
+    draft: '',
     submits: [],
     compactions: 0,
     ran: [],
@@ -97,8 +100,10 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('prompt.fill', ($, e) => {
     w.fills.push(e.text)
+    w.draft = e.text
     return { isFilled: true } as never
   })
+  on('prompt.read', () => ({ value: { text: w.draft, cursor: w.draft.length } }) as never)
   on('prompt.submit', ($, e) => {
     if (e.origin?.kind === 'plugin') w.submits.push(e as Record<string, unknown>)
     return { text: e.text, ...(e.context ? { context: e.context } : {}) }

@@ -292,6 +292,8 @@ export function register(on: On): void {
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       $.clock.after(0, async () => {
+        // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
+        if ((await $.prompt.read()).text === resend.text) await $.prompt.fill({ text: '' }).catch(() => undefined)
         // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
         if (failed !== undefined) {

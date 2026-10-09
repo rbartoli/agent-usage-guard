@@ -31,6 +31,25 @@ describe('heavy prompt', () => {
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ rule: 'prompt-context', answer: 'compact' })])
   })
 
+  test('compact, then send takes the dropped prompt back out of the input box before sending it', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step' // Claude Code puts a dropped prompt back in the input box
+    await w.clock.settle()
+    expect(w.draft).toBe('')
+    expect(w.submits).toHaveLength(1)
+  })
+
+  test('compact, then send leaves a different draft in the input box', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step, and add tests'
+    await w.clock.settle()
+    expect(w.draft).toBe('next step, and add tests')
+  })
+
   test('a compaction a hook vetoes puts the prompt back instead of sending it at full size', async ($, on) => {
     const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000, compactResult: () => ({ skip: 'a PreCompact hook blocked it' }) })
     await start($, w, true)
