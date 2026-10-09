@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The status line clears when what it shows runs out.** The guard redrew it
+  only when the session did something, so a session that sat idle across a
+  5-hour reset kept "5-hour window 95%: new agents refused" while the new
+  window stood at 3%, and an allow's "lifted until" stayed up after it ended.
+  The guard now also redraws the line when a plan window resets, an allow
+  ends, or the pause on agent spawns ends.
+
 ## 1.0.1 — 2026-10-09
 
 - **"Compact, then send" empties the input box when the put-back is late.**

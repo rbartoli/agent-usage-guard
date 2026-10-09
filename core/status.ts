@@ -25,6 +25,14 @@ export function statusLine(state: SessionState, peers: readonly PeerRecord[], co
   return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
+/** When the line changes with no event to redraw it: an allow or the fuse ends, or the most-used plan window resets. */
+export function statusLineExpiry(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): number | undefined {
+  if (!config.enabled) return undefined
+  const times = [state.override?.until, state.fuseUntil, highestLimit(state, peers, now)?.resetsAt]
+  const later = times.filter((t): t is number => t !== undefined && t > now)
+  return later.length > 0 ? Math.min(...later) : undefined
+}
+
 /** What is lifted or paused now, worded alike in the status line and the report. */
 function liftedOrPaused(state: SessionState, now: number): string[] {
   const parts: string[] = []

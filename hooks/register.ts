@@ -2,7 +2,7 @@
 // and requests, asks the user when a verdict needs an answer, and keeps the
 // cross-session records in $.store. Every decision lives in ../core.
 
-import type { EngineInterface, On } from 'claude-code'
+import type { EngineInterface, On, Timer } from 'claude-code'
 
 import {
   type AgentRequest,
@@ -60,6 +60,7 @@ import {
   resumeGuard,
   splitJournalKeys,
   statusLine,
+  statusLineExpiry,
   statusReport,
   toolGate,
 } from '../core/index.ts'
@@ -78,6 +79,8 @@ const JOURNAL_BUDGET_BYTES = 2_000_000
 const STALE_PEER_MS = 86_400_000
 /** When a session was last active outlives the session by a month, for a later resume. */
 const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
+/** A redraw waits at most a day, then times the rest: a JavaScript timer cannot wait past 24.8 days, and a window may reset later. */
+const REDRAW_MAX_MS = 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
 
@@ -93,6 +96,8 @@ let lastPublished = 0
 /** The last-active time this process last stored, so a heartbeat does not rewrite it. */
 let lastActiveKept: number | undefined
 let lastStatus: string | undefined
+/** The pending redraw of the status line, and the time it is for. */
+let redraw: { at: number; timer: Timer } | undefined
 let compactAfterTurn = false
 /** A Stop event happened and no prompt has started a new turn since. */
 let stopSeen = false
@@ -575,6 +580,7 @@ async function refreshStatus($: Api): Promise<void> {
   if (!interactive) return
   try {
     const now = await $.clock.now()
+    redrawAt($, statusLineExpiry(session, peers, config, now), now)
     const text = statusLine(session, peers, config, now)
     if (text === lastStatus) return
     lastStatus = text
@@ -582,6 +588,19 @@ async function refreshStatus($: Api): Promise<void> {
   } catch (error) {
     $.ui.log(`agent-usage-guard could not update its status line: ${String(error)}`, { to: 'debug' })
   }
+}
+
+/** Redraws the status line at `at`, when something it shows runs out: a quiet session has no event that would. */
+function redrawAt($: Api, at: number | undefined, now: number): void {
+  if (redraw?.at === at) return
+  redraw?.timer.cancel()
+  redraw = undefined
+  if (at === undefined) return
+  const timer = $.clock.after(Math.min(at - now, REDRAW_MAX_MS), () => {
+    redraw = undefined
+    return refreshStatus($)
+  })
+  redraw = { at, timer }
 }
 
 type Asked = { answer: string | undefined; unavailable: boolean; at: number }

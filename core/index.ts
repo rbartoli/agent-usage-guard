@@ -48,7 +48,7 @@ export {
   peerRecord,
   prune,
 } from './state.ts'
-export { USAGE, statusLine, statusReport } from './status.ts'
+export { USAGE, statusLine, statusLineExpiry, statusReport } from './status.ts'
 export { canonical, contextBucket, fingerprint } from './text.ts'
 export { type HeavyOutcome, type ToolRequest, resolveHeavyAsk, toolGate } from './tools.ts'
 export { type Ask, type Deny, type Family, HEADER, type Rule, SIGNATURE, type Verdict } from './verdict.ts'
