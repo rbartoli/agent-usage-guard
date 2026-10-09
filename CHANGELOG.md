@@ -47,6 +47,10 @@
   refusal covers a stopped loop. A refusal carries its number, so the adapter no
   longer reads it back out of the text, and a test fails if the adapter stops
   reading one of the documented variables.
+- **README claims made exact.** It no longer says most usage tools only monitor,
+  or calls the mod small enough to audit; it gives the size instead (about
+  2,400 lines of TypeScript, no dependencies). Checked on 2.1.295: plan-window
+  readings arrive in `claude -p` too, after its first response.
 
 ## 1.0.0 — 2026-10-07
 
