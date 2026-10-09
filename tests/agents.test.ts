@@ -235,6 +235,14 @@ describe('plan-window gate', () => {
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 
+  test('the status line clears when its window resets, even in a quiet session', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    await w.clock.set(Date.parse('2027-01-15T15:00:00.000Z'))
+    expect(w.statuses).toEqual(['5-hour window 96%: new agents refused', undefined])
+  })
+
   test('a fast burn makes new agents ask before the window runs out', async ($, on) => {
     const w = world(on, { answers: ["Don't start it"] })
     await start($, w, true)
@@ -291,6 +299,14 @@ describe('agent fuse and overrides', () => {
     expect((await $.command.run({ command: 'agent-guard', args: 'resume' } as never)).text).toBe('Limits apply again.')
     expect(String((await spawn($, w)).deny)).toMatch(/agents are running on this machine/)
     expect(journalRows(w).some((r) => r.ev === 'override' && r.rule === 'agents')).toBe(true)
+  })
+
+  test('the status line clears when an allow runs out, even in a quiet session', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.command.run({ command: 'agent-guard', args: 'allow 5' } as never)
+    await w.clock.advance(5 * MINUTE)
+    expect(w.statuses).toEqual([expect.stringMatching(/^all limits lifted until \d\d:\d\d$/), undefined])
   })
 
   test('the old bracket marker sent alone lifts the limits without a model turn', async ($, on) => {
