@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **The report counts each locked window once.** It counted every request
+  that failed on a usage limit, so retries and parallel sessions hitting the
+  same window inflated the figure. A lockout row now keeps the reset time of
+  the window that locked, and the report counts each window once. Rows from
+  earlier versions have no reset time, so a run of them with no gap of an hour
+  or more counts as one. Reports shorter than a week no longer give a weekly
+  rate, which only repeated the count.
+
 ## 1.0.2 — 2026-10-09
 
 - **The status line clears when what it shows runs out.** The guard redrew it

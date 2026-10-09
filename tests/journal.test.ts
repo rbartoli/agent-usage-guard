@@ -17,6 +17,15 @@ describe('lockouts and the report', () => {
     expect(journalRows(w).map((r) => `${r.ev}:${r.kind}`)).toEqual(['lockout:unknown', 'lockout:seven_day', 'lockout:spend_limit', 'lockout:model'])
   })
 
+  test('a lockout row keeps when the window that locked resets', async ($, on) => {
+    const w = world(on)
+    await start($, w, false)
+    const resetsAt = '2027-01-15T15:00:00.000Z'
+    await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt }], changed: ['rateLimits'] } as never)
+    await $.classic.StopFailure({ error: 'rate_limit', error_details: "You've hit your session limit · resets 3pm" } as never)
+    expect(journalRows(w).filter((r) => r.ev === 'lockout')).toEqual([expect.objectContaining({ kind: 'five_hour', pct: 100, resets: Date.parse(resetsAt) })])
+  })
+
   test('/agent-guard report reads every session\'s journal on this machine', async ($, on) => {
     const w = world(on, {
       store: {
