@@ -24,15 +24,16 @@ headlines=(
 # the guard's question chip, its headline, and one progress mark per scene.
 caption() {
   local out=$1 index=$2 label=$3 headline=$4
-  local width=1200 height=84 accent='#afb8f9' x
+  local width=1200 height=84 accent='#afb8f9' color x
   local args=(-size "${width}x${height}" xc:'#0c0f16'
     -font DejaVu-Sans-Mono-Bold -pointsize 15 -kerning 1.5 -fill "$accent" -annotate +28+30 "$label"
     -font DejaVu-Sans-Bold -pointsize 25 -kerning 0 -fill '#f0f6fc' -annotate +28+65 "$headline"
     -fill '#21262d' -draw "rectangle 0,$((height - 1)) $width,$height")
   x=$((width - 28 - ${#scenes[@]} * 34 + 6))
   for ((k = 1; k <= ${#scenes[@]}; k++)); do
-    args+=(-fill "$([ "$k" -le "$index" ] && echo "$accent" || echo '#30363d')"
-      -draw "roundrectangle $x,22 $((x + 27)),26 2,2")
+    color='#30363d'
+    ((k <= index)) && color=$accent
+    args+=(-fill "$color" -draw "roundrectangle $x,22 $((x + 27)),26 2,2")
     x=$((x + 34))
   done
   convert "${args[@]}" "$out"

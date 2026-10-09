@@ -21,7 +21,7 @@ case "$scene" in
 esac
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-claude="$(command -v "${CLAUDE_BIN:-claude}")" || { echo "Claude Code is required but was not found." >&2; exit 1; }
+bin="$(command -v "${CLAUDE_BIN:-claude}")" || { echo "Claude Code is required but was not found." >&2; exit 1; }
 
 run="$(mktemp -d "${TMPDIR:-/tmp}/agent-usage-guard-demo-XXXXXX")"
 api=''
@@ -39,7 +39,7 @@ for _ in $(seq 50); do [ -s "$run/port" ] && break; sleep 0.1; done
 
 # A made-up key for the scripted API, pre-approved so Claude Code does not ask
 # about it, plus the onboarding and folder-trust answers a fresh config lacks.
-key="sk-ant-api03-agent-usage-guard-demo-$(printf '0%.0s' {1..60})"
+key=not-a-real-key-the-scripted-api-accepts-any
 node -e '
   const [path, work, key] = process.argv.slice(1)
   const config = {
@@ -59,7 +59,7 @@ claude=(env -i HOME="$home" PATH="$PATH" SHELL=/bin/bash TERM="${TERM:-xterm-256
   ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$run/port")" ANTHROPIC_API_KEY="$key"
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
   CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=20
-  "$claude" --plugin-dir "$root" --model opus --permission-mode default
+  "$bin" --plugin-dir "$root" --model opus --permission-mode default
   --allowedTools Agent Read 'Bash(grep:*)')
 cd "$work"
 
@@ -75,10 +75,10 @@ if [ "$scene" = cold-cache ]; then
   # Two hours and 14 minutes since the last exchange, as the guard's record has it.
   node -e '
     const fs = require("fs"), [dir, session] = process.argv.slice(1)
-    const name = fs.readdirSync(dir).find((n) => n.startsWith("agent-usage-guard_"))
-    const store = JSON.parse(fs.readFileSync(`${dir}/${name}`, "utf8"))
-    store[`last-active:${session}`] -= (2 * 60 + 14) * 60_000
-    fs.writeFileSync(`${dir}/${name}`, JSON.stringify(store))
+    const path = dir + "/" + fs.readdirSync(dir).find((n) => n.startsWith("agent-usage-guard_"))
+    const store = JSON.parse(fs.readFileSync(path, "utf8"))
+    store["last-active:" + session] -= (2 * 60 + 14) * 60_000
+    fs.writeFileSync(path, JSON.stringify(store))
   ' "$config/plugins/store" "$session"
 fi
 
