@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **An icon for the plugin directory listing:** `.claude-plugin/icon.png`.
+- **An icon for the plugin directory listing**: a shield with a pause sign.
 - **Installs no longer copy the demo GIF.** The README shows the 2.9 MB GIF
   from the v1.0.0 release instead of the repository, and `demo/render.sh`
   writes it to `demo/out/`.
