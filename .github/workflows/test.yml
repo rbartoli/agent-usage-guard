@@ -36,3 +36,66 @@ jobs:
         run: |
           for script in demo/run-demo.sh demo/render.sh; do bash -n "$script"; done
           shellcheck demo/run-demo.sh demo/render.sh
+
+  # On main, a plugin.json version with no tag yet gets its tag and its GitHub
+  # release, with the version's CHANGELOG section as the notes.
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Find the version's tag
+        id: version
+        run: |
+          name=$(node -p 'require("./.claude-plugin/plugin.json").name')
+          version=$(node -p 'require("./.claude-plugin/plugin.json").version')
+          # The tag `claude plugin tag` creates, which Claude Code resolves versions from.
+          tag="$name--v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag is already released"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Claude Code
+        if: steps.version.outputs.new == 'true'
+        run: npm install --global "$CLAUDE_CODE"
+      - name: Tag the version and publish its release
+        if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Release notes render each newline as a line break, so each paragraph
+          # and list item of the version's section goes on one line.
+          awk -v version="$VERSION" '
+            function flush() {
+              if (line == "") return
+              if (printed && gap) print ""
+              print line
+              printed = 1; gap = 0; line = ""
+            }
+            /^## / { if (found) exit; found = ($2 == version); next }
+            !found { next }
+            /^[ \t]*$/ { flush(); gap = 1; next }
+            /^[ \t]*([-*+]|[0-9]+[.)]) / || /^#/ { flush(); line = $0; next }
+            { sub(/^[ \t]+/, ""); line = (line == "") ? $0 : line " " $0 }
+            END { flush() }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          claude plugin tag --push .
+          gh release create "$TAG" --verify-tag --latest --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"

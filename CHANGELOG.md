@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **CI publishes each release.** When the tests pass on `main` and the
+  version in `plugin.json` has no tag yet, CI tags the commit with
+  `claude plugin tag --push` and publishes its GitHub release, with that
+  version's section of this changelog as the notes. A release is now a PR
+  that bumps the version and dates its section.
+
 ## 1.0.3 — 2026-10-10
 
 - **The report counts each locked window once.** It counted every request
