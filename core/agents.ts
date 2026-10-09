@@ -2,7 +2,7 @@
 // passes here before it starts.
 
 import type { Config } from './config.ts'
-import { type LimitReading, type LoopId, type PeerRecord, type SessionState, overrideCovers, runningAgents, within } from './state.ts'
+import { type LimitReading, type LoopId, type PeerRecord, type SessionState, overrideCovers, runningAgents, tokensWithin, within } from './state.ts'
 import { count, duration, shortClock, tokens, windowName } from './text.ts'
 import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, join, refuse, sentence } from './verdict.ts'
 
@@ -137,8 +137,7 @@ function agentTrips(
     })
   }
 
-  const own = state.agentTokens.filter(([t]) => now - t < window).reduce((sum, [, n]) => sum + n, 0)
-  const processed = own + peers.reduce((sum, p) => sum + p.agentTokens, 0)
+  const processed = tokensWithin(state.agentTokens, now, window) + peers.reduce((sum, p) => sum + tokensWithin(p.agentTokens, now, window), 0)
   if (processed >= config.agentTokensMax) {
     trips.push({
       rule: 'agent-tokens',

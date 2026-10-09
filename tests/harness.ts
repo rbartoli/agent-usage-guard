@@ -17,8 +17,14 @@ export type WorldOptions = {
   answers?: Array<string | undefined>
   /** The session has no AskUserQuestion tool, as with `--tools Agent,Read`. */
   noQuestionTool?: boolean
-  /** Claude Code's answer to a tool call the test fires. */
-  toolResult?: (e: ToolEvent) => Record<string, unknown>
+  /** The question dialog fails to open, as on an engine error. */
+  askFails?: boolean
+  /** Claude Code's answer to a tool call the test fires; a promise keeps the call running. */
+  toolResult?: (e: ToolEvent) => Record<string, unknown> | Promise<Record<string, unknown>>
+  /** What `$.session.compact()` answers, such as `{ skip }` when a hook vetoes it. */
+  compactResult?: () => Record<string, unknown>
+  /** Runs inside every agent spawn before it answers, so a test can hold one while it starts. */
+  onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
   contextTokens?: number
   transcriptMtime?: number
@@ -80,7 +86,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   }))
   on('session.compact', () => {
     w.compactions += 1
-    return { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 } as never
+    return (options.compactResult?.() ?? { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 }) as never
   })
   on('fs.stat', () =>
     options.transcriptMtime === undefined
@@ -115,10 +121,15 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('turn.complete', () => ({ text: '' }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
-  on('agent.spawn', () => ({ model: 'claude-test', agentId: `agent-${w.ran.filter((r) => r === 'spawn').length}` }))
+  on('agent.spawn', async () => {
+    const agentId = `agent-${w.ran.filter((r) => r === 'spawn').length}`
+    await options.onSpawn?.()
+    return { model: 'claude-test', agentId } as never
+  })
   on('tool.call', ($, e) => {
     if (e.tool === 'AskUserQuestion') {
       if (options.noQuestionTool) return { deny: 'no tool named "AskUserQuestion" in this session' }
+      if (options.askFails) throw new Error('the dialog could not open')
       const questions = e.questions as Array<{ question: string; options: Array<{ label: string }> }>
       const question = questions[0]!
       w.questions.push(question.question)

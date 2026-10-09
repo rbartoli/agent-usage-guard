@@ -16,31 +16,37 @@ export function contextOf(usage: TokenUsage): number {
   return usage.input + usage.cacheRead + usage.cacheWrite
 }
 
-/** One model request finished in `loop`, with the usage the API reported. */
+/**
+ * One model request finished in `loop`, with the usage the API reported. An
+ * agent that makes one is running, even if it had gone quiet for long enough
+ * to stop counting.
+ */
 export function observeResponse(state: SessionState, config: Config, now: number, loop: LoopId, usage: TokenUsage): void {
-  const l = loopOf(state, loop)
   const context = contextOf(usage)
-  l.context = context
-  l.lastResponseAt = now
-  if (context < config.toolContext) {
-    delete l.heavyLeaseUntil
-    l.heavyCalls = []
-  }
-  if (loop === MAIN) {
-    if (context < config.contextWarn) state.warned = false
-    if (context < config.contextHard) delete state.leases['prompt-context']
-    return
-  }
-  if (state.agents[loop]) state.agentTokens.push([now, context + usage.output])
+  setContext(state, config, loop, context)
+  loopOf(state, loop).activeAt = now
+  const agent = state.agents[loop]
+  if (!agent) return
+  agent.running = true
+  state.agentTokens.push([now, context + usage.output])
 }
 
 /** The main conversation's context as the harness reports it, without a request. */
 export function observeMainContext(state: SessionState, config: Config, tokens: number): void {
-  const main = loopOf(state, MAIN)
-  main.context = tokens
-  if (tokens < config.contextWarn) state.warned = false
-  if (tokens < config.contextHard) delete state.leases['prompt-context']
-  if (tokens < config.toolContext) delete main.heavyLeaseUntil
+  setContext(state, config, MAIN, tokens)
+}
+
+/** Records a loop's context. Below a threshold, what was tied to it ends: the heavy approval and tool budget, the warning, the prompt approval. */
+function setContext(state: SessionState, config: Config, loop: LoopId, context: number): void {
+  const l = loopOf(state, loop)
+  l.context = context
+  if (context < config.toolContext) {
+    delete l.heavyLeaseUntil
+    l.heavyCalls = []
+  }
+  if (loop !== MAIN) return
+  if (context < config.contextWarn) state.warned = false
+  if (context < config.contextHard) delete state.leases['prompt-context']
 }
 
 /** The conversation was compacted: the old context and approvals tied to it are gone. */
@@ -98,12 +104,20 @@ export function reserveStart(state: SessionState, now: number): number {
   return now
 }
 
-/** Ends a reservation: the agent started, or the start failed and is not counted. */
-export function releaseStart(state: SessionState, reservedAt: number, started: boolean): void {
+/**
+ * Ends a reservation: `agentId` started, or, when it is undefined, the start
+ * failed and is not counted. Once no gated agent is starting, the starts none
+ * of them claimed are counted.
+ */
+export function releaseStart(state: SessionState, reservedAt: number, agentId: string | undefined): void {
   state.pendingStarts = Math.max(0, state.pendingStarts - 1)
-  if (started) return
-  const index = state.starts.indexOf(reservedAt)
-  if (index >= 0) state.starts.splice(index, 1)
+  if (agentId === undefined) {
+    const index = state.starts.indexOf(reservedAt)
+    if (index >= 0) state.starts.splice(index, 1)
+  } else {
+    delete state.unclaimed[agentId]
+  }
+  countUnclaimed(state)
 }
 
 /** An agent the gate allowed has started; its start was counted by `reserveStart`. */
@@ -124,6 +138,35 @@ export function observeAgentActive(state: SessionState, agentId: string): void {
   if (agent) agent.running = true
 }
 
+/**
+ * The harness reported an agent's loop starting. A known agent is running
+ * again. An unknown one started without passing the gate, such as a /subtask
+ * fork the user ran: it is counted, never blocked. While a gated agent is
+ * still starting, its own report looks the same, so an unknown start waits
+ * until every gated agent has claimed its own. An agent with no type is the
+ * harness's own and is left out, which is the one case that returns false.
+ */
+export function observeAgentStart(state: SessionState, now: number, agentId: string, type: string): boolean {
+  if (state.agents[agentId]) {
+    observeAgentActive(state, agentId)
+    return true
+  }
+  if (!type) return false
+  state.unclaimed[agentId] = { at: now, kind: type === 'fork' ? 'fork' : 'subagent' }
+  countUnclaimed(state)
+  return true
+}
+
+/** Once no gated agent is starting, counts the starts none of them claimed. */
+function countUnclaimed(state: SessionState): void {
+  if (state.pendingStarts > 0) return
+  for (const [agentId, { at, kind }] of Object.entries(state.unclaimed)) {
+    observeSpawn(state, at, { agentId, kind, depth: 1 })
+    state.starts.push(at)
+  }
+  state.unclaimed = {}
+}
+
 /** A known agent finished a run. Its context leaves with it. */
 export function observeAgentRunEnd(state: SessionState, agentId: string): void {
   const agent = state.agents[agentId]
@@ -132,13 +175,24 @@ export function observeAgentRunEnd(state: SessionState, agentId: string): void {
   if (loop) loop.stopped = false
 }
 
-/** Agent records that have not run for `ttlMs` stop counting as running. */
+/**
+ * Agents with no sign of life for `ttlMs` stop counting as running: no model
+ * request, and no tool call running or finished. That catches an agent whose
+ * end the harness never reported; one that is only slow comes back with its
+ * next request.
+ */
 export function expireAgents(state: SessionState, now: number, ttlMs: number): void {
   for (const agent of Object.values(state.agents)) {
     const loop = state.loops[agent.id]
-    const lastSeen = Math.max(agent.startedAt, loop?.lastResponseAt ?? 0)
-    if (agent.running && now - lastSeen > ttlMs) agent.running = false
+    if (!agent.running || (loop?.toolsRunning ?? 0) > 0) continue
+    if (now - Math.max(agent.startedAt, loop?.activeAt ?? 0) > ttlMs) agent.running = false
   }
+}
+
+/** A tool call is starting to run in `loop`. */
+export function observeToolStart(state: SessionState, loop: LoopId): void {
+  const l = loopOf(state, loop)
+  l.toolsRunning = (l.toolsRunning ?? 0) + 1
 }
 
 /**
@@ -147,6 +201,9 @@ export function expireAgents(state: SessionState, now: number, ttlMs: number): v
  * a retry loop.
  */
 export function observeToolResult(state: SessionState, now: number, loop: LoopId, fingerprint: string, failed: boolean): void {
+  const l = loopOf(state, loop)
+  l.toolsRunning = Math.max(0, (l.toolsRunning ?? 0) - 1)
+  l.activeAt = now
   for (const [key, failure] of Object.entries(state.failures)) {
     if (failure.loop === loop && key !== fingerprint) delete state.failures[key]
   }

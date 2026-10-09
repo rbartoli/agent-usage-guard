@@ -24,6 +24,28 @@ describe('agent gate', () => {
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 
+  test('an agent in a long tool call stays counted, however long the tool runs', async ($, on) => {
+    let finish: (result: Record<string, unknown>) => void = () => undefined
+    const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: '1' }, toolResult: () => new Promise((resolve) => (finish = resolve)) })
+    await start($, w, false)
+    const agent = String((await spawn($, w)).agentId)
+    const build = $.tool.call({ tool: 'Bash', command: 'make test', agentId: agent } as never)
+    await w.clock.advance(30 * MINUTE)
+    expect(String((await spawn($, w)).deny)).toMatch(/1 agent is running on this machine \(limit 1\)/)
+    finish({ result: 'ok' })
+    await build
+  })
+
+  test('an agent that went quiet counts again once it makes a request', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: '2' } })
+    await start($, w, false)
+    const quiet = String((await spawn($, w)).agentId)
+    await w.clock.advance(20 * MINUTE)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    await respond($, w, 20_000, quiet)
+    expect(String((await spawn($, w)).deny)).toMatch(/2 agents are running on this machine \(limit 2\)/)
+  })
+
   test('approving the question lifts the limit for the window, so the next agent does not ask again', async ($, on) => {
     const w = world(on, { answers: ['Allow'] })
     await start($, w, true)
@@ -69,6 +91,16 @@ describe('agent gate', () => {
     expect(String(refused.deny)).toMatch(/Nobody can approve it in this session/)
     expect(String(refused.deny)).not.toMatch(/dismissed/)
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ answer: 'unavailable' })])
+  })
+
+  test('a question that fails to open lets the agent start instead of counting as a no', async ($, on) => {
+    const w = world(on, { askFails: true })
+    await start($, w, true)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([])
+    expect(w.logs).toContainEqual(expect.stringMatching(/the agent\.spawn hook failed, so the event went ahead/))
   })
 
   test('agents started while a question is open are held back at once, without waiting on it', async ($, on) => {
@@ -122,7 +154,7 @@ describe('agent gate', () => {
   })
 
   test('agents running in other sessions count against the limit; a stale record does not', async ($, on) => {
-    const peer = (at: number) => ({ v: 1, at, running: 4, starts: [], agentTokens: 0, dormantResumes: [] })
+    const peer = (at: number) => ({ v: 2, at, running: 4, starts: [], agentTokens: [], dormantResumes: [] })
     const w = world(on, { store: { 'peer:other-session': peer(T0 - MINUTE), 'peer:gone-session': peer(T0 - 60 * MINUTE) } })
     await start($, w, false)
     const refused = await spawn($, w)
@@ -131,11 +163,20 @@ describe('agent gate', () => {
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 
+  test("another session's subagent tokens age out with the window, even once it stops publishing", async ($, on) => {
+    const agentTokens = [[T0 - 9 * MINUTE, 6_000_000], [T0 - MINUTE, 5_000_000]]
+    const w = world(on, { store: { 'peer:other-session': { v: 2, at: T0 - MINUTE, running: 0, starts: [], agentTokens, dormantResumes: [] } } })
+    await start($, w, false)
+    expect(String((await spawn($, w)).deny)).toMatch(/subagents processed 11M tokens in the last 10 min \(limit 10M\)/)
+    await w.clock.advance(2 * MINUTE)
+    expect((await spawn($, w)).agentId).toBeDefined()
+  })
+
   test('the session publishes its own counts and clears them when it ends', async ($, on) => {
     const w = world(on)
     await start($, w, false)
     await spawn($, w)
-    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ v: 1, running: 1, starts: [T0] })
+    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ v: 2, running: 1, starts: [T0] })
     await $.session.end({ reason: 'other' } as never)
     expect(w.store.has(`peer:${SESSION_ID}`)).toBe(false)
   })
@@ -273,6 +314,29 @@ describe('agents started outside the gate', () => {
     await start($, w, false)
     await $.classic.SubagentStart({ agent_id: 'afork-1', agent_type: 'fork' } as never)
     expect(String((await spawn($, w)).deny)).toMatch(/1 agent is running on this machine \(limit 1\)/)
+  })
+
+  test('a /subtask fork that starts while a gated agent is starting is counted once, beside it', async ($, on) => {
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atSpawn = new Promise<void>((resolve) => (reached = resolve))
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const w = world(on, {
+      env: { AGENT_GUARD_AGENT_MAX: '3' },
+      onSpawn: async () => {
+        reached()
+        await held
+      },
+    })
+    await start($, w, false)
+    const first = spawn($, w)
+    await atSpawn
+    await $.classic.SubagentStart({ agent_id: 'agent-1', agent_type: 'general-purpose' } as never)
+    await $.classic.SubagentStart({ agent_id: 'afork-1', agent_type: 'fork' } as never)
+    release()
+    expect((await first).agentId).toBe('agent-1')
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(String((await spawn($, w)).deny)).toMatch(/3 agents are running on this machine \(limit 3\)/)
   })
 
   test("Claude Code's own internal agents, which have no type, are not counted", async ($, on) => {

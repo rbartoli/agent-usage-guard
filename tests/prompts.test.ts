@@ -31,6 +31,31 @@ describe('heavy prompt', () => {
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ rule: 'prompt-context', answer: 'compact' })])
   })
 
+  test('a compaction a hook vetoes puts the prompt back instead of sending it at full size', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000, compactResult: () => ({ skip: 'a PreCompact hook blocked it' }) })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    await w.clock.settle()
+    expect(w.submits).toEqual([])
+    expect(w.fills).toEqual(['next step'])
+    expect(w.logs).toContainEqual('agent-usage-guard could not compact (a PreCompact hook blocked it), so your prompt is back in the input box.')
+  })
+
+  test('a compaction that fails puts the prompt back too', async ($, on) => {
+    const w = world(on, {
+      answers: ['Compact, then send'],
+      contextTokens: 520_000,
+      compactResult: () => {
+        throw new Error('the summary request failed')
+      },
+    })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    await w.clock.settle()
+    expect(w.submits).toEqual([])
+    expect(w.fills).toEqual(['next step'])
+  })
+
   test('cancel puts the prompt back in the input box', async ($, on) => {
     const w = world(on, { answers: ['Cancel'], contextTokens: 520_000 })
     await start($, w, true)
@@ -82,7 +107,7 @@ describe('dormant resume', () => {
   })
 
   test('headless: one heavy dormant resume per window on the machine', async ($, on) => {
-    const peer = { v: 1, at: T0 - 60_000, running: 0, starts: [], agentTokens: 0, dormantResumes: [T0 - 60_000] }
+    const peer = { v: 2, at: T0 - 60_000, running: 0, starts: [], agentTokens: [], dormantResumes: [T0 - 60_000] }
     const w = world(on, { contextTokens: 200_000, transcriptMtime: T0 - 2 * HOUR, store: { 'peer:other': peer } })
     await start($, w, false)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
@@ -101,6 +126,15 @@ describe('context warning', () => {
     ])
     const second = (await $.prompt.submit(typed('b'))) as Record<string, unknown>
     expect(second.context).toBeUndefined()
+  })
+
+  test("a background task's notification leaves the warning for the next prompt the user types", async ($, on) => {
+    const w = world(on, { contextTokens: 310_000 })
+    await start($, w, true)
+    const note = { text: '<task-notification>done</task-notification>', origin: { kind: 'task-notification' }, wait: false } as never
+    expect(await $.prompt.submit(note)).toEqual({ text: '<task-notification>done</task-notification>' })
+    const next = (await $.prompt.submit(typed('next'))) as Record<string, unknown>
+    expect(next.context).toEqual([expect.stringMatching(/^agent-usage-guard: this session's context is 310k tokens\./)])
   })
 
   test('nothing is added below the threshold', async ($, on) => {
