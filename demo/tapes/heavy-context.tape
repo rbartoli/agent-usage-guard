@@ -12,12 +12,12 @@ Type "Check every caller before we change the cookie flags."
 Sleep 500ms
 Enter
 Wait+Screen /Keep working at/
-Sleep 3.5s
+Sleep 9.5s
 Down
-Sleep 400ms
+Sleep 1.2s
 Enter
 Wait+Screen /\(\d+ lines\)/
-Sleep 2s
+Sleep 3.5s
 Hide
 Ctrl+C
 Ctrl+C

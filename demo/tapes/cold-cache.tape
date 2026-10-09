@@ -12,10 +12,10 @@ Type "Wire secure_cookies through and fix the README claim."
 Sleep 500ms
 Enter
 Wait+Screen /Send this prompt\?/
-Sleep 3.5s
+Sleep 9s
 Enter
 Wait+Screen /Secure only when it is set/
-Sleep 2s
+Sleep 6.5s
 Hide
 Ctrl+C
 Ctrl+C

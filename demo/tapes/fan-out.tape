@@ -12,12 +12,12 @@ Type "Audit the release candidate: one agent per area, all in parallel."
 Sleep 500ms
 Enter
 Wait+Screen /Start this agent\?/
-Sleep 3.5s
+Sleep 7s
 Down
-Sleep 400ms
+Sleep 1.2s
 Enter
 Wait+Screen /Four audits are running/
-Sleep 2s
+Sleep 5.5s
 Hide
 Ctrl+C
 Ctrl+C
