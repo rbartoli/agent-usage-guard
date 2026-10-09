@@ -1,7 +1,8 @@
 // The prompt gate. It never touches a prompt the user did not type, such as a
 // background task's notification or another session's message: holding those
-// loses results. It never holds a prompt over plan limits either; Claude Code
-// waits at a limit and resumes on its own.
+// loses results, and the context warning waits for the user's own next prompt.
+// It never holds a prompt over plan limits either; Claude Code waits at a limit
+// and resumes on its own.
 
 import type { Config } from './config.ts'
 import { MAIN, type PeerRecord, type Scope, type SessionState, overrideCovers, within } from './state.ts'
@@ -43,11 +44,9 @@ export function promptGate(
   now: number,
   request: PromptRequest,
 ): Verdict {
-  if (!config.enabled) return ALLOW
+  if (!config.enabled || request.source === 'other') return ALLOW
   const context = state.loops[MAIN]?.context
-  if (request.source === 'other' || context === undefined || overrideCovers(state, now, 'context')) {
-    return withWarning(state, config, context)
-  }
+  if (context === undefined || overrideCovers(state, now, 'context')) return withWarning(state, config, context)
 
   const hardLeased = state.leases['prompt-context'] !== undefined
   if (context >= config.contextHard && !hardLeased) {

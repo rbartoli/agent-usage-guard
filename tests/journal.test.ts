@@ -46,8 +46,8 @@ describe('lockouts and the report', () => {
       store: {
         'journal:2026-09-01:old': [{ t: T0 - 136 * DAY, s: 'old', ev: 'lockout' }],
         'journal:2027-01-10:recent': [{ t: T0 - 5 * DAY, s: 'recent', ev: 'lockout' }],
-        'peer:gone': { v: 1, at: T0 - 2 * DAY, running: 3, starts: [], agentTokens: 0, dormantResumes: [] },
-        'peer:alive': { v: 1, at: T0 - 60_000, running: 1, starts: [], agentTokens: 0, dormantResumes: [] },
+        'peer:gone': { v: 2, at: T0 - 2 * DAY, running: 3, starts: [], agentTokens: [], dormantResumes: [] },
+        'peer:alive': { v: 2, at: T0 - 60_000, running: 1, starts: [], agentTokens: [], dormantResumes: [] },
       },
     })
     await start($, w, false)

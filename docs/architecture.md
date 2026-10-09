@@ -46,12 +46,14 @@ handler for each is named in brackets.
 | Moment | Core call | Claude Code |
 |---|---|---|
 | A model request finished | `observeResponse(state, config, now, loop, usage)` | `turn.step` |
+| The main context was measured | `observeMainContext(state, config, tokens)` | `session.measure`, `$.session.usage()` before a prompt |
 | Plan-window readings arrived | `observeLimits(state, config, readings)` | `session.measure` |
 | An agent is about to start | `agentGate(...)`, then `reserveStart` in the same synchronous step | `agent.spawn` |
 | A finished agent is sent new work | `agentGate(..., { resume: true })` | `tool.call` for `SendMessage` |
 | An agent started or finished a run | `observeSpawn`, `releaseStart`, `observeAgentRunEnd` | `agent.spawn` result, `turn.complete` |
-| A tool is about to run | `toolGate(...)` | `tool.call` |
-| A tool finished | `observeToolResult(state, now, loop, fingerprint, failed)` | `tool.call` after `next` |
+| An agent's loop started, gated or not | `observeAgentStart(state, now, agentId, type)` | `classic.SubagentStart` |
+| A tool is about to run | `toolGate(...)`, then `observeToolStart` if it runs | `tool.call` |
+| A tool finished | `observeToolResult(state, now, loop, fingerprint, failed)` | `tool.call` after `next`, even if it threw |
 | A prompt is about to be sent | `promptGate(...)` | `prompt.submit` |
 | A request failed | `lockoutKind(error, text, readings)` | `classic.StopFailure` |
 | The conversation compacted | `observeCompaction(state)` | `classic.PostCompact`, `classic.SessionStart` with source `compact` |
@@ -81,7 +83,7 @@ Two duties fall on every adapter, because only it knows the harness:
 ## Sessions on one machine
 
 Each session publishes a `PeerRecord`: running agents, recent starts, subagent
-tokens, recent dormant resumes, and its latest 5-hour reading. The gates sum
+tokens per minute, recent dormant resumes, and its latest 5-hour reading. The gates sum
 fresh peer records with the session's own state, so the agent limits hold
 across every session on the machine. A record counts only while its session
 keeps making model requests (`AGENT_GUARD_PEER_TTL_SECONDS`), so a crashed

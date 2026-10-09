@@ -108,18 +108,20 @@ describe('plan windows', () => {
 
 describe('peers', () => {
   test('only fresh records of our own shape count', () => {
-    const good = { v: 1, at: NOW - 1000, running: 2, starts: [], agentTokens: 0, dormantResumes: [] }
+    const good = { v: 2, at: NOW - 1000, running: 2, starts: [], agentTokens: [], dormantResumes: [] }
     const stale = { ...good, at: NOW - 3_600_000 }
-    expect(livePeers([good, stale, { v: 2 }, 'junk', null], NOW, 900_000)).toEqual([good])
+    const older = { ...good, v: 1, agentTokens: 0 }
+    expect(livePeers([good, stale, older, { v: 2 }, 'junk', null], NOW, 900_000)).toEqual([good])
   })
 
   test('a published record carries counts, never names or prompts', () => {
     const state = newSession('s', false)
     state.agents.a = { id: 'a', kind: 'subagent', depth: 1, running: true, startedAt: NOW, name: 'secret-name' }
     state.starts = [NOW - 700_000, NOW - 1000]
+    state.agentTokens = [[NOW - 700_000, 9], [NOW - 90_000, 1000], [NOW - 70_000, 500], [NOW - 1000, 20]]
     prune(state, NOW, 600_000)
     const record = peerRecord(state, NOW, 600_000)
-    expect(record).toEqual({ v: 1, at: NOW, running: 1, starts: [NOW - 1000], agentTokens: 0, dormantResumes: [] })
+    expect(record).toEqual({ v: 2, at: NOW, running: 1, starts: [NOW - 1000], agentTokens: [[NOW - 70_000, 1500], [NOW - 1000, 20]], dormantResumes: [] })
     expect(JSON.stringify(record)).not.toMatch(/secret/)
   })
 })

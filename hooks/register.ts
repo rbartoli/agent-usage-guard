@@ -39,12 +39,14 @@ import {
   newSession,
   observeAgentActive,
   observeAgentRunEnd,
+  observeAgentStart,
   observeCompaction,
   observeLimits,
   observeMainContext,
   observeResponse,
   observeSpawn,
   observeToolResult,
+  observeToolStart,
   observeTurnEnd,
   parseCommand,
   parseConfig,
@@ -144,23 +146,15 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.Stop', next.error, () => next(e)))
 
   on('classic.SubagentStart', async ($, e, next) => {
-    if (session.agents[e.agent_id]) {
-      observeAgentActive(session, e.agent_id)
-      await publish($, await $.clock.now())
-    } else if (e.agent_type && session.pendingStarts === 0) {
-      // Started without an agent.spawn the guard could hold, such as a /subtask
-      // fork the user ran: counted, never blocked. Claude Code's own internal
-      // agents have no type and are left out.
-      const now = await $.clock.now()
-      observeSpawn(session, now, { agentId: e.agent_id, kind: e.agent_type === 'fork' ? 'fork' : 'subagent', depth: 1 })
-      session.starts.push(now)
-      await publish($, now)
-    }
+    const now = await $.clock.now()
+    if (observeAgentStart(session, now, e.agent_id, e.agent_type)) await publish($, now)
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.SubagentStart', next.error, () => next(e)))
 
   on('classic.StopFailure', async ($, e, next) => {
     if (config.enabled) {
+      // On StopFailure, last_assistant_message is the failed request's own
+      // error message, the text Claude Code shows, not Claude's earlier prose.
       const text = `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}`
       const kind = lockoutKind(e.error, text, Object.values(session.limits))
       if (kind) {
@@ -236,11 +230,8 @@ export function register(on: On): void {
     if (compactAfterTurn) {
       compactAfterTurn = false
       $.clock.after(0, async () => {
-        try {
-          await $.session.compact()
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not compact: ${String(error)}`)
-        }
+        const failed = await compact($)
+        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}).`)
       })
     }
     await refreshStatus($)
@@ -297,10 +288,12 @@ export function register(on: On): void {
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       $.clock.after(0, async () => {
-        try {
-          await $.session.compact()
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not compact: ${String(error)}`)
+        // Sending at full size after a failed compaction is the one thing the user chose against.
+        const failed = await compact($)
+        if (failed !== undefined) {
+          $.ui.log(`agent-usage-guard could not compact (${failed}), so your prompt is back in the input box.`)
+          await $.prompt.fill({ text: resend.text }).catch(() => undefined)
+          return
         }
         try {
           await $.prompt.submit({ ...resend, asUser: true })
@@ -327,13 +320,13 @@ export function register(on: On): void {
       await journal($, await $.clock.now(), { ev: 'deny', rule: verdict.rule, tool: 'Agent', n: refusalNumber(verdict.message) })
       return { deny: verdict.message }
     }
-    let started = false
+    let started: string | undefined
     try {
       const result = await next(e)
-      started = !result.deny && Boolean(result.agentId)
-      if (started && result.agentId) {
+      if (!result.deny && result.agentId) {
+        started = result.agentId
         const kind = e.isTeammate ? 'teammate' : e.workflow ? 'workflow' : e.fork ? 'fork' : 'subagent'
-        observeSpawn(session, await $.clock.now(), { agentId: result.agentId, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
+        observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
       }
       return result
     } finally {
@@ -384,19 +377,20 @@ export function register(on: On): void {
       }
     }
 
+    observeToolStart(session, loop)
     let result: Awaited<ReturnType<typeof next>> | undefined
     try {
       result = await next(e)
+      return result
     } finally {
+      observeToolResult(session, await $.clock.now(), loop, print, Boolean(result?.isError) && !result?.deny)
       if (resumed) {
         const delivered = result !== undefined && !result.deny && !result.isError
-        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered)
+        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined)
         if (delivered) observeAgentActive(session, resumed.id)
         await publish($, await $.clock.now())
       }
     }
-    observeToolResult(session, await $.clock.now(), loop, print, Boolean(result.isError) && !result.deny)
-    return result
   }).catch(($, e, next) => failOpen($, 'tool.call', next.error, () => next(e)))
 
   on('command.run', { command: COMMAND }, async ($, e) => {
@@ -537,9 +531,9 @@ async function readMainContext($: Api): Promise<void> {
   }
 }
 
-/** Time since the last model response, or since the transcript last changed after a resume. */
+/** Time since the conversation was last active, or since the transcript last changed after a resume. */
 async function idleTime($: Api, now: number): Promise<number | undefined> {
-  const last = session.loops[MAIN]?.lastResponseAt
+  const last = session.loops[MAIN]?.activeAt
   if (last !== undefined) return now - last
   if (!transcriptPath) return undefined
   try {
@@ -567,18 +561,34 @@ type Asked = { answer: string | undefined; unavailable: boolean }
 
 /**
  * Asks in Claude Code's own question dialog. `answer` is undefined when the
- * user dismissed it. `unavailable` means the question could not be asked at
- * all, because the session has no AskUserQuestion tool: from then on the
- * session counts as one nobody can answer, and the gate decides alone.
+ * dialog came back without one: the user dismissed it. `unavailable` means the
+ * question could not be asked at all, because the session has no
+ * AskUserQuestion tool: from then on the session counts as one nobody can
+ * answer, and the gate decides alone. Any other failure, such as the turn
+ * being interrupted while the dialog was open, is not the user's answer: it
+ * is rethrown, and the hook fails open.
  */
 async function askUser($: Api, ask: Ask): Promise<Asked> {
   try {
     return { answer: await $.ui.ask(ask.question, { options: ask.options, header: HEADER }), unavailable: false }
   } catch (error) {
-    if (!/no tool named "AskUserQuestion"/.test(String(error))) return { answer: undefined, unavailable: false }
-    askUnavailable = true
-    session.canAsk = false
-    return { answer: undefined, unavailable: true }
+    const text = String(error)
+    if (/no tool named "AskUserQuestion"/.test(text)) {
+      askUnavailable = true
+      session.canAsk = false
+      return { answer: undefined, unavailable: true }
+    }
+    if (/\$\.ui\.ask: no answer\b/.test(text)) return { answer: undefined, unavailable: false }
+    throw error
+  }
+}
+
+/** Compacts the conversation. Returns why it did not, or undefined once it has. */
+async function compact($: Api): Promise<string | undefined> {
+  try {
+    return (await $.session.compact()).skip
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
   }
 }
 

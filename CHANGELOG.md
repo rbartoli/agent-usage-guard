@@ -20,9 +20,10 @@ event before every agent starts.
   longer need a blanket gate. Resuming a finished subagent with `SendMessage` is
   gated and counted. `/subtask` forks are counted when they start.
 - **Questions instead of hard blocks.** When a person can answer, a gate asks in
-  Claude Code's own question dialog. An approval lasts until its condition
-  clears, which ends the approval fatigue of 0.2.5 (132 of 136 high-context asks
-  approved, often one per tool call). Without a person (`claude -p`, the SDK,
+  Claude Code's own question dialog. An approval holds for a while (a plan
+  window until it resets, a heavy context until it shrinks, agent counts for
+  10 minutes), which ends the approval fatigue of 0.2.5 (132 of 136
+  high-context asks approved, often one per tool call). Without a person (`claude -p`, the SDK,
   `dontAsk`), gates refuse as before.
 - **Subagents are judged on their own context.** 0.2.5 read the main
   transcript for a subagent's tool calls, so subagents inherited the parent's
