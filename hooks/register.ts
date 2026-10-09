@@ -287,9 +287,13 @@ export function register(on: On): void {
     if (outcome.kind === 'allow') return send(contextNote(session, config))
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
-      $.clock.after(0, async () => {
-        // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
+      // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
+      // The put-back can land before or after the first look, so look again before sending.
+      const takeBack = async () => {
         if ((await $.prompt.read()).text === resend.text) await fillInput($, '')
+      }
+      $.clock.after(0, async () => {
+        await takeBack()
         // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
         if (failed !== undefined) {
@@ -297,6 +301,7 @@ export function register(on: On): void {
           await fillInput($, resend.text)
           return
         }
+        await takeBack()
         try {
           await $.prompt.submit({ ...resend, asUser: true })
         } catch (error) {
