@@ -1,61 +1,6 @@
 # Changelog
 
-## Unreleased
-
-- **The README demo shows four scenes** (a cold cache, parallel agents, a heavy-context
-  loop and the subagent token budget), recorded from Claude Code against a scripted
-  local API so it needs no account and spends no usage: `demo/render.sh`.
-- **An agent in a long tool call stays counted.** The 15-minute expiry for
-  agents whose end was never reported also caught a live agent blocked in one
-  tool, such as a test suite, and nothing counted it again, so one more agent
-  could start past the concurrency limit. An agent with a tool call running is
-  never expired now, and any agent that makes a request counts as running again.
-- **Only a dismissed question counts as a no.** Any other failure of the
-  question dialog, such as the turn being interrupted while it was open, was
-  read as the user declining: agents were refused for 10 minutes and the
-  refusal fed the fuse. Such a failure now fails open.
-- **"Compact, then send" never sends at full size.** When compaction failed,
-  or a hook vetoed it, the prompt was resent anyway, past the 500k gate. It now
-  goes back into the input box with the reason.
-- **Notifications leave the context warning for you.** A background task's
-  notification above 300k used up the one-time warning, so your own next
-  prompt never carried it.
-- **Other sessions' subagent tokens age out with the window.** Each session
-  published one total that counted for as long as its record lived (15
-  minutes, against a 10-minute budget). Records now carry tokens per minute
-  (peer record version 2); a session still running an older version is not
-  counted until it reloads.
-- **A context reading below 400k clears the heavy-context budget.** It revoked
-  "Keep going" but kept the call history, so the next heavy call asked again.
-- **A `/subtask` fork is counted while a gated agent is starting.** It was
-  ignored whenever an agent spawn was pending.
-- **The dormant gate works on resumed sessions.** It timed a resumed session's
-  idleness from the transcript's modification time, which Claude Code rewrites
-  when it resumes a session and hourly while one is open, so `claude --resume`
-  and `--continue` never asked before re-writing an expired cache. Each session
-  now stores when it was last active in the mod store for 30 days, and a resume
-  reads it from there. Found while recording the README demo: a 485k-token
-  session resumed after two hours sent its prompt without asking.
-- **"Compact, then send" leaves the input box empty.** Claude Code puts a
-  dropped prompt back in the input box, so after the guard resent it the box
-  still held the prompt, and one more Enter sent it twice. The guard now takes
-  it out, unless you have changed it.
-- **`/agent-guard report` counts only answers you gave.** A question the
-  session could not show, because it has no AskUserQuestion tool, counted as
-  declined; it now counts as neither. A single event reads "1 event".
-- **`/agent-guard status` words a paused fuse as the status line does:**
-  "agent spawns paused until 14:32", not "agent fuse burning".
-- **Tidier code, same behaviour.** Shared helpers replace copies: one path asks
-  and journals all three questions, one function counts across sessions, one
-  refusal covers a stopped loop. A refusal carries its number, so the adapter no
-  longer reads it back out of the text, and a test fails if the adapter stops
-  reading one of the documented variables.
-- **README claims made exact.** It no longer says most usage tools only monitor,
-  or calls the mod small enough to audit; it gives the size instead (about
-  2,400 lines of TypeScript, no dependencies). Checked on 2.1.295: plan-window
-  readings arrive in `claude -p` too, after its first response.
-
-## 1.0.0 — 2026-10-07
+## 1.0.0 — 2026-10-09
 
 Rebuilt as a Claude Code mod (Claude Code v2.1.287 or later). The Python command
 hooks are gone: the guard now runs inside Claude Code, as a harness-agnostic core
@@ -127,6 +72,62 @@ event before every agent starts.
 - Tests run in Claude Code's mod test kit (`claude plugin test`), including a
   parallel batch of five agents against a limit of four, a race the first draft
   of the mod got wrong.
+
+Changed between the first build (2026-10-07) and this release, after a pre-launch
+review, the README demo recordings and a quality pass:
+
+- **The README demo shows four scenes** (a cold cache, parallel agents, a heavy-context
+  loop and the subagent token budget), recorded from Claude Code against a scripted
+  local API so it needs no account and spends no usage: `demo/render.sh`.
+- **An agent in a long tool call stays counted.** The 15-minute expiry for
+  agents whose end was never reported also caught a live agent blocked in one
+  tool, such as a test suite, and nothing counted it again, so one more agent
+  could start past the concurrency limit. An agent with a tool call running is
+  never expired now, and any agent that makes a request counts as running again.
+- **Only a dismissed question counts as a no.** Any other failure of the
+  question dialog, such as the turn being interrupted while it was open, was
+  read as the user declining: agents were refused for 10 minutes and the
+  refusal fed the fuse. Such a failure now fails open.
+- **"Compact, then send" never sends at full size.** When compaction failed,
+  or a hook vetoed it, the prompt was resent anyway, past the 500k gate. It now
+  goes back into the input box with the reason.
+- **Notifications leave the context warning for you.** A background task's
+  notification above 300k used up the one-time warning, so your own next
+  prompt never carried it.
+- **Other sessions' subagent tokens age out with the window.** Each session
+  published one total that counted for as long as its record lived (15
+  minutes, against a 10-minute budget). Records now carry tokens per minute
+  (peer record version 2); a session still running an older version is not
+  counted until it reloads.
+- **A context reading below 400k clears the heavy-context budget.** It revoked
+  "Keep going" but kept the call history, so the next heavy call asked again.
+- **A `/subtask` fork is counted while a gated agent is starting.** It was
+  ignored whenever an agent spawn was pending.
+- **The dormant gate works on resumed sessions.** It timed a resumed session's
+  idleness from the transcript's modification time, which Claude Code rewrites
+  when it resumes a session and hourly while one is open, so `claude --resume`
+  and `--continue` never asked before re-writing an expired cache. Each session
+  now stores when it was last active in the mod store for 30 days, and a resume
+  reads it from there. Found while recording the README demo: a 485k-token
+  session resumed after two hours sent its prompt without asking.
+- **"Compact, then send" leaves the input box empty.** Claude Code puts a
+  dropped prompt back in the input box, so after the guard resent it the box
+  still held the prompt, and one more Enter sent it twice. The guard now takes
+  it out, unless you have changed it.
+- **`/agent-guard report` counts only answers you gave.** A question the
+  session could not show, because it has no AskUserQuestion tool, counted as
+  declined; it now counts as neither. A single event reads "1 event".
+- **`/agent-guard status` words a paused fuse as the status line does:**
+  "agent spawns paused until 14:32", not "agent fuse burning".
+- **Tidier code, same behaviour.** Shared helpers replace copies: one path asks
+  and journals all three questions, one function counts across sessions, one
+  refusal covers a stopped loop. A refusal carries its number, so the adapter no
+  longer reads it back out of the text, and a test fails if the adapter stops
+  reading one of the documented variables.
+- **README claims made exact.** It no longer says most usage tools only monitor,
+  or calls the mod small enough to audit; it gives the size instead (about
+  2,400 lines of TypeScript, no dependencies). Checked on 2.1.295: plan-window
+  readings arrive in `claude -p` too, after its first response.
 
 ## 0.2.5 — 2026-08-16
 
