@@ -12,7 +12,7 @@
   <sub>Recorded from Claude Code's interactive UI against the fictional <a href="demo/fixture/northstar-api">Northstar API fixture</a>. The question on screen is the guard's own, not the model describing it. <a href="demo/agent-usage-guard.tape">Reproduce it with VHS</a> (contacts Claude and uses a little usage).</sub>
 </p>
 
-Most usage tools are **monitors**: they tell you what you spent after you spent it. This is a **gate**: it acts before the agent starts, the prompt is sent, or the call runs. When you are at the keyboard it asks you, in Claude Code's own question dialog. When nobody can answer, it refuses and tells Claude why, so the model can wait, batch the work, or stop.
+It acts before the spend, not after it: before an agent starts, a prompt is sent, or a tool call runs. Agent limits hold across every Claude Code session on your machine, and fan-out and heavy context are capped at any usage level, not only near the limit. When you are at the keyboard it asks you, in Claude Code's own question dialog. When nobody can answer, it refuses and tells Claude why, so the model can wait, batch the work, or stop. `/agent-guard report` shows what it did.
 
 - **Plan-aware.** It reads the 5-hour and weekly percentages Claude Code reports, and keeps the end of the window for you.
 - **One answer covers a while.** An approval lifts its condition until it clears or times out, so the same question does not come back call after call.
@@ -88,7 +88,7 @@ Checked against Claude Code v2.1.295:
 | A finished subagent sent new work with `SendMessage` | Held before it resumes, and counted as a start |
 | `/subtask` forks, and anything else that starts without `agent.spawn` | Counted when they start, never held: Claude Code offers no event before they do. Forks Claude starts through the Agent tool are held like any agent |
 | Claude Code's internal agents (prompt suggestions, compaction) | Not counted |
-| Plan-window percentages | From the last API response, on a subscription. API-key sessions report none, so only the token and count budgets apply |
+| Plan-window percentages | From the last API response on a subscription, in `claude -p` too. API-key sessions report none, so only the token and count budgets apply |
 | Teammates running in their own terminal panes | Not visible: their loops run in other processes |
 | Sessions on other machines | Not counted: the cross-session records live in this machine's mod store |
 | Tools the API runs itself, such as the advisor | Not holdable: no tool event fires for them |
@@ -107,7 +107,7 @@ The report counts usage-limit lockouts per week, plan-window threshold crossings
 
 ## Security and privacy
 
-A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is small enough to audit, and `claude plugin validate .` lists every API it calls:
+A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is about 2,400 lines of TypeScript with no dependencies, and `claude plugin validate .` lists every API it calls and every environment variable it reads:
 
 - It makes no network requests and starts no processes.
 - It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
