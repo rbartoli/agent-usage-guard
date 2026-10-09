@@ -12,7 +12,7 @@ export type TokenUsage = {
 }
 
 /** Tokens a request carried in: what the loop's next request re-reads, roughly. */
-export function contextOf(usage: TokenUsage): number {
+function contextOf(usage: TokenUsage): number {
   return usage.input + usage.cacheRead + usage.cacheWrite
 }
 

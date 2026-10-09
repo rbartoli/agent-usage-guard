@@ -5,9 +5,9 @@
 // and resumes on its own.
 
 import type { Config } from './config.ts'
-import { MAIN, type PeerRecord, type Scope, type SessionState, overrideCovers, within } from './state.ts'
-import { duration, tokens } from './text.ts'
-import { ALLOW, type Ask, type CompactThenSend, type Drop, type Rule, SIGNATURE, type Verdict } from './verdict.ts'
+import { MAIN, type PeerRecord, type Scope, type SessionState, countOnMachine, overrideCovers } from './state.ts'
+import { count, duration, sentence, tokens } from './text.ts'
+import { ALLOW, type Allow, type Ask, type Drop, type Rule, SIGNATURE, type Verdict } from './verdict.ts'
 
 /** Who a prompt came from, as far as the guard cares. */
 export type PromptSource = 'user' | 'headless' | 'other'
@@ -19,9 +19,9 @@ export type PromptRequest = {
   idleMs?: number
 }
 
-export const PROMPT_COMPACT = 'Compact, then send'
-export const PROMPT_SEND = 'Send anyway'
-export const PROMPT_CANCEL = 'Cancel'
+const PROMPT_COMPACT = 'Compact, then send'
+const PROMPT_SEND = 'Send anyway'
+const PROMPT_CANCEL = 'Cancel'
 
 const MARKERS: Readonly<Record<string, Scope>> = {
   '[allow-usage-guard]': 'all',
@@ -61,15 +61,13 @@ export function promptGate(
   if (idle !== undefined && idle >= config.dormantMs && context >= config.dormantContext) {
     const detail = `this session was idle for ${duration(idle)}, so its prompt cache has likely expired and this request re-writes about ${tokens(context)} tokens`
     if (state.canAsk && request.source === 'user') {
-      return promptAsk('dormant', `This session was idle for ${duration(idle)}, so its prompt cache has likely expired and this request re-writes about ${tokens(context)} tokens. Send this prompt?`, detail)
+      return promptAsk('dormant', `${sentence(detail)}. Send this prompt?`, detail)
     }
-    const recent =
-      within(state.dormantResumes, now, config.windowMs).length +
-      peers.reduce((sum, p) => sum + within(p.dormantResumes, now, config.windowMs).length, 0)
+    const recent = countOnMachine(state, peers, 'dormantResumes', now, config.windowMs)
     if (recent >= config.dormantMax) {
       return drop(
         'dormant',
-        `${detail}, and ${recent} heavy idle session${recent === 1 ? '' : 's'} already resumed on this machine in the last ${duration(config.windowMs)} (limit ${config.dormantMax}). Try again later, or compact the session first.`,
+        `${detail}, and ${count(recent, 'heavy idle session')} already resumed on this machine in the last ${duration(config.windowMs)} (limit ${config.dormantMax}). Try again later, or compact the session first.`,
       )
     }
     state.dormantResumes.push(now)
@@ -77,7 +75,10 @@ export function promptGate(
   return withWarning(state, config, context)
 }
 
-export type PromptOutcome = Verdict | CompactThenSend
+/** The user chose to compact first: drop the prompt, compact, then send it. */
+export type CompactThenSend = { kind: 'compact-then-send'; rule: Rule; message: string }
+
+export type PromptOutcome = Allow | Drop | CompactThenSend
 
 /** Applies the user's answer to a prompt question. Dismissing it cancels. */
 export function resolvePromptAsk(state: SessionState, ask: Ask, answer: string | undefined): PromptOutcome {

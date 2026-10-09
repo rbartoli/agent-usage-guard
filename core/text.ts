@@ -5,6 +5,17 @@ export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
+/** Lists details as prose: "a", "a and b", "a, b and c". */
+export function join(details: readonly string[]): string {
+  if (details.length <= 1) return details.join('')
+  return `${details.slice(0, -1).join(', ')} and ${details.at(-1)}`
+}
+
+/** Capitalises the first letter of a sentence assembled from parts. */
+export function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 export function tokens(n: number): string {
   if (n >= 1_000_000) return `${trim(n / 1_000_000)}M`
   if (n >= 1000) return `${Math.round(n / 1000)}k`

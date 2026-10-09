@@ -37,6 +37,16 @@
   dropped prompt back in the input box, so after the guard resent it the box
   still held the prompt, and one more Enter sent it twice. The guard now takes
   it out, unless you have changed it.
+- **`/agent-guard report` counts only answers you gave.** A question the
+  session could not show, because it has no AskUserQuestion tool, counted as
+  declined; it now counts as neither. A single event reads "1 event".
+- **`/agent-guard status` words a paused fuse as the status line does:**
+  "agent spawns paused until 14:32", not "agent fuse burning".
+- **Tidier code, same behaviour.** Shared helpers replace copies: one path asks
+  and journals all three questions, one function counts across sessions, one
+  refusal covers a stopped loop. A refusal carries its number, so the adapter no
+  longer reads it back out of the text, and a test fails if the adapter stops
+  reading one of the documented variables.
 
 ## 1.0.0 — 2026-10-07
 

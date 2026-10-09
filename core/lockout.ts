@@ -21,12 +21,8 @@ const PHRASES: ReadonlyArray<[RegExp, string]> = [
 export function lockoutKind(error: string, text: string, readings: readonly LimitReading[]): string | undefined {
   if (error !== 'rate_limit' && error !== 'billing_error') return undefined
   if (MODEL_SWITCH.test(text)) return 'model'
-  for (const [pattern, kind] of PHRASES) {
-    if (!pattern.test(text)) continue
-    if (kind !== 'unknown') return kind
-    const full = readings.find((r) => r.percent >= 100)
-    return full?.kind ?? kind
-  }
-  const full = readings.find((r) => r.percent >= 100)
-  return full?.kind
+  const named = PHRASES.find(([pattern]) => pattern.test(text))?.[1]
+  if (named !== undefined && named !== 'unknown') return named
+  // A generic phrase, or none, is pinned to the window a reading shows full.
+  return readings.find((r) => r.percent >= 100)?.kind ?? named
 }

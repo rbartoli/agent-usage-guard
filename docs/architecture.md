@@ -61,7 +61,8 @@ handler for each is named in brackets.
 A verdict is one of:
 
 - `allow`, optionally with a `note` the model should read with the prompt;
-- `deny`, with a `message` for the model, already worded by the ladder;
+- `deny`, with a `message` for the model, already worded by the ladder, and
+  `n`, which refusal of that condition it is;
 - `drop`, with a `message` for the user, for a prompt that is not sent;
 - `ask`, with a question and options. The adapter puts the question to the
   person and hands the answer to `resolveAgentAsk` (a verdict),

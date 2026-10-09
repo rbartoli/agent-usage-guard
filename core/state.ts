@@ -136,6 +136,17 @@ export function tokensWithin(pairs: ReadonlyArray<readonly [number, number]>, no
   return pairs.reduce((sum, [t, n]) => (now - t < windowMs ? sum + n : sum), 0)
 }
 
+/** Entries of one rolling list inside the window, in this session and its peers together. */
+export function countOnMachine(
+  state: SessionState,
+  peers: readonly PeerRecord[],
+  list: 'starts' | 'dormantResumes',
+  now: number,
+  windowMs: number,
+): number {
+  return [state[list], ...peers.map((p) => p[list])].reduce((sum, times) => sum + within(times, now, windowMs).length, 0)
+}
+
 /** Running agents, counting those allowed a moment ago that are still starting. */
 export function runningAgents(state: SessionState): number {
   return Object.values(state.agents).filter((a) => a.running).length + state.pendingStarts

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { SPECS } from '../core/index.ts'
 import { SESSION_ID, T0, journalRows, respond, start, world } from './harness.ts'
 
 const HOUR = 3_600_000
@@ -183,5 +184,12 @@ describe('switches', () => {
     const status = await $.command.run({ command: 'agent-guard', args: 'status' } as never)
     expect(status.text).toMatch(/Config: AGENT_GUARD_AGENT_MAX=lots is not a number from 1 to 1000; using 4\./)
     expect(status.text).toMatch(/\(limit 4\)/)
+  })
+
+  test('every threshold variable is read', async ($, on) => {
+    const w = world(on, { env: Object.fromEntries(SPECS.map((spec) => [spec.env, 'lots'])) })
+    await start($, w, false)
+    const status = await $.command.run({ command: 'agent-guard', args: 'status' } as never)
+    for (const spec of SPECS) expect(status.text).toContain(`Config: ${spec.env}=lots is not a number`)
   })
 })

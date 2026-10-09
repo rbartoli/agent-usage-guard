@@ -7,18 +7,17 @@ import {
   agentGate,
   canonical,
   defaultConfig,
-  expiredJournalKeys,
   fingerprint,
   formatReport,
   highestLimit,
   journalKey,
-  journalKeysSince,
   livePeers,
   newSession,
   parseCommand,
   parseConfig,
   peerRecord,
   prune,
+  splitJournalKeys,
 } from '../core/index.ts'
 
 const NOW = Date.UTC(2027, 0, 15, 12, 0, 0)
@@ -139,8 +138,8 @@ describe('journal', () => {
   test('keys are per session per day, and retention drops whole days', () => {
     expect(journalKey('abc', NOW)).toBe('journal:2027-01-15:abc')
     const keys = ['journal:2027-01-15:a', 'journal:2026-10-01:b', 'journal:2026-12-20:c', 'peer:x']
-    expect(expiredJournalKeys(keys, NOW, 30)).toEqual(['journal:2026-10-01:b'])
-    expect(journalKeysSince(keys, NOW, 7)).toEqual(['journal:2027-01-15:a'])
+    expect(splitJournalKeys(keys, NOW, 30)).toEqual({ recent: ['journal:2027-01-15:a', 'journal:2026-12-20:c'], expired: ['journal:2026-10-01:b'] })
+    expect(splitJournalKeys(keys, NOW, 7).recent).toEqual(['journal:2027-01-15:a'])
   })
 
   test('the report counts lockouts per week, answers and refusals by rule', () => {
@@ -150,15 +149,17 @@ describe('journal', () => {
       { t: NOW - DAY, s: 'a', ev: 'answer', rule: 'concurrency', answer: 'allow' },
       { t: NOW - DAY, s: 'b', ev: 'ask', rule: 'concurrency' },
       { t: NOW - DAY, s: 'b', ev: 'answer', rule: 'concurrency', answer: 'refuse' },
+      { t: NOW - DAY, s: 'b', ev: 'ask', rule: 'concurrency' },
+      { t: NOW - DAY, s: 'b', ev: 'answer', rule: 'concurrency', answer: 'unavailable' },
       { t: NOW - 3600, s: 'b', ev: 'deny', rule: 'retry', tool: 'Bash', n: 3 },
       { t: NOW - 3600, s: 'b', ev: 'limit', kind: 'five_hour', pct: 81, rule: '80%' },
       { t: NOW - 60, s: 'b', ev: 'override', rule: 'agents' },
       { t: NOW - 30 * DAY, s: 'c', ev: 'lockout' },
     ]
     const text = formatReport(rows, NOW, 7)
-    expect(text).toMatch(/^agent-usage-guard report: last 7 days\n8 events from 2 sessions/)
+    expect(text).toMatch(/^agent-usage-guard report: last 7 days\n10 events from 2 sessions/)
     expect(text).toMatch(/Usage-limit lockouts: 1 \(1\.0 per week\)/)
-    expect(text).toMatch(/concurrency\s+asks 2: 1 \/ 1 · refusals 0 · held 0/)
+    expect(text).toMatch(/concurrency\s+asks 3: 1 \/ 1 · refusals 0 · held 0/)
     expect(text).toMatch(/retry\s+asks 0: 0 \/ 0 · refusals 1 · held 0/)
     expect(text).toMatch(/Refusals at rung 3 or later: 1/)
     expect(text).toMatch(/Limit crossings: 5-hour 80% ×1/)
@@ -167,5 +168,9 @@ describe('journal', () => {
 
   test('an empty journal says so', () => {
     expect(formatReport([], NOW, 7)).toMatch(/Nothing recorded yet/)
+  })
+
+  test('one event from one session over one day reads in the singular', () => {
+    expect(formatReport([{ t: NOW - 60, s: 'a', ev: 'override', rule: 'all' }], NOW, 1)).toMatch(/^agent-usage-guard report: last 1 day\n1 event from 1 session\n/)
   })
 })

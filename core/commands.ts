@@ -1,8 +1,8 @@
 // `/agent-guard` and its arguments. The command runs without a model turn, so
 // the model never sees an override and cannot take one as permission.
 
-import { type Scope, type SessionState, loopOf } from './state.ts'
-import { duration, shortClock } from './text.ts'
+import { MAIN, type Scope, type SessionState, loopOf } from './state.ts'
+import { duration, sentence, shortClock } from './text.ts'
 import { USAGE, scopeName } from './status.ts'
 
 export type Command =
@@ -60,7 +60,7 @@ export function applyOverride(state: SessionState, now: number, scope: Scope, mi
     for (const loop of Object.values(state.loops)) loop.stopped = false
     state.failures = {}
   }
-  return `${sentenceCase(scopeName(scope))} lifted for ${duration(minutes * 60_000)}, until ${shortClock(until)}. /agent-guard resume ends it early.`
+  return `${sentence(scopeName(scope))} lifted for ${duration(minutes * 60_000)}, until ${shortClock(until)}. /agent-guard resume ends it early.`
 }
 
 /** Ends an override and clears declined questions, so the guard asks again. */
@@ -70,16 +70,12 @@ export function resumeGuard(state: SessionState): string {
   state.refusals = {}
   delete state.fuseUntil
   state.denials = state.denials.filter((d) => !d.agent)
-  loopOf(state, 'main').stopped = false
+  loopOf(state, MAIN).stopped = false
   return had
     ? 'Limits apply again.'
     : 'No override was active. Declined questions are cleared, so the guard asks again.'
 }
 
 export function helpText(error?: string): string {
-  return error ? `${sentenceCase(error)}.\n\n${USAGE}` : USAGE
-}
-
-function sentenceCase(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1)
+  return error ? `${sentence(error)}.\n\n${USAGE}` : USAGE
 }
