@@ -1,5 +1,5 @@
 # Written by Claude Code when it loads the mod with --plugin-dir
 .claude-plugin/types/
 .DS_Store
-# Scene recordings demo/render.sh joins into assets/agent-usage-guard.gif
+# Scene recordings, and the GIF demo/render.sh joins them into
 demo/out/

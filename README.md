@@ -5,7 +5,7 @@
 `agent-usage-guard` is a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview): it runs inside Claude Code and holds runaway spend before it happens. It reads your plan's live usage, and it holds subagent fan-out, heavy-context churn and retry loops.
 
 <p align="center">
-  <img src="assets/agent-usage-guard.gif" alt="Four scenes in Claude Code's interactive UI. The guard asks before a prompt re-writes the expired cache of a 486k-token session resumed after two hours, before a fifth parallel agent starts against a limit of four, before a twenty-first tool call at 433k context, and before a new agent once subagents have processed 10.9M tokens." width="900">
+  <img src="https://github.com/rbartoli/agent-usage-guard/releases/download/agent-usage-guard--v1.0.0/agent-usage-guard.gif" alt="Four scenes in Claude Code's interactive UI. The guard asks before a prompt re-writes the expired cache of a 486k-token session resumed after two hours, before a fifth parallel agent starts against a limit of four, before a twenty-first tool call at 433k context, and before a new agent once subagents have processed 10.9M tokens." width="900">
 </p>
 
 <p align="center">
@@ -110,9 +110,13 @@ The report counts usage-limit lockouts per week, plan-window threshold crossings
 A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is about 2,400 lines of TypeScript with no dependencies, and `claude plugin validate .` lists every API it calls and every environment variable it reads:
 
 - It makes no network requests and starts no processes.
+- It decides only what the rules above describe: whether an agent starts, a prompt is sent, or a tool call runs. It asks you whenever you can answer, and gives the reason when it refuses. It reads permission modes but never changes them, and it writes no settings.
+- The only prompt it submits is your own: after "Compact, then send", it sends the prompt you typed, unchanged, once compaction finishes.
+- Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.
 - It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
 - Journal days older than 90 days are deleted (`AGENT_GUARD_JOURNAL_DAYS`).
+- `demo/`, which builds the GIF above, is not part of what runs. It starts Claude Code in a temporary home directory with a made-up API key for a scripted local API, and reads none of your credentials.
 
 Set `AGENT_GUARD=0` to turn it off without uninstalling it.
 
