@@ -124,6 +124,18 @@ describe('heavy-context tool budget', () => {
     expect(JSON.stringify(journalRows(w))).not.toMatch(/echo|"b"/)
   })
 
+  test('a context reading below the budget threshold clears the budget as well as the approval', async ($, on) => {
+    const w = world(on, { answers: ['Keep going'], env: { AGENT_GUARD_TOOL_MAX: '2' } })
+    await start($, w, true)
+    await respond($, w, 450_000)
+    for (let i = 0; i < 3; i++) await $.tool.call(bash(`a${i}`))
+    expect(w.questions).toHaveLength(1)
+    await $.session.measure({ context: { window: 1_000_000, tokens: 390_000 }, rateLimits: [], changed: ['context'] } as never)
+    await respond($, w, 450_000)
+    for (let i = 0; i < 2; i++) expect(await $.tool.call(bash(`b${i}`))).toEqual({ result: 'ok' })
+    expect(w.questions).toHaveLength(1)
+  })
+
   test('compaction clears the budget', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_TOOL_MAX: '1' } })
     await start($, w, false)

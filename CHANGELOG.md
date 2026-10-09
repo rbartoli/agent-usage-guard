@@ -2,12 +2,36 @@
 
 ## Unreleased
 
+- **An agent in a long tool call stays counted.** The 15-minute expiry for
+  agents whose end was never reported also caught a live agent blocked in one
+  tool, such as a test suite, and nothing counted it again, so one more agent
+  could start past the concurrency limit. An agent with a tool call running is
+  never expired now, and any agent that makes a request counts as running again.
+- **Only a dismissed question counts as a no.** Any other failure of the
+  question dialog, such as the turn being interrupted while it was open, was
+  read as the user declining: agents were refused for 10 minutes and the
+  refusal fed the fuse. Such a failure now fails open.
+- **"Compact, then send" never sends at full size.** When compaction failed,
+  or a hook vetoed it, the prompt was resent anyway, past the 500k gate. It now
+  goes back into the input box with the reason.
+- **Notifications leave the context warning for you.** A background task's
+  notification above 300k used up the one-time warning, so your own next
+  prompt never carried it.
+- **Other sessions' subagent tokens age out with the window.** Each session
+  published one total that counted for as long as its record lived (15
+  minutes, against a 10-minute budget). Records now carry tokens per minute
+  (peer record version 2); a session still running an older version is not
+  counted until it reloads.
+- **A context reading below 400k clears the heavy-context budget.** It revoked
+  "Keep going" but kept the call history, so the next heavy call asked again.
+- **A `/subtask` fork is counted while a gated agent is starting.** It was
+  ignored whenever an agent spawn was pending.
 - **The dormant gate works on resumed sessions.** It timed a resumed session's
   idleness from the transcript's modification time, which Claude Code rewrites
   when it resumes a session and hourly while one is open, so `claude --resume`
   and `--continue` never asked before re-writing an expired cache. Each session
-  now stores the time of its last response in the mod store for 30 days, and a
-  resume reads it from there. Found while recording the README demo: a
+  now stores when it was last active in the mod store for 30 days, and a resume
+  reads it from there. Found while recording the README demo: a
   485k-token session resumed after two hours sent its prompt without asking.
 
 ## 1.0.0 — 2026-10-07
@@ -28,9 +52,10 @@ event before every agent starts.
   longer need a blanket gate. Resuming a finished subagent with `SendMessage` is
   gated and counted. `/subtask` forks are counted when they start.
 - **Questions instead of hard blocks.** When a person can answer, a gate asks in
-  Claude Code's own question dialog. An approval lasts until its condition
-  clears, which ends the approval fatigue of 0.2.5 (132 of 136 high-context asks
-  approved, often one per tool call). Without a person (`claude -p`, the SDK,
+  Claude Code's own question dialog. An approval holds for a while (a plan
+  window until it resets, a heavy context until it shrinks, agent counts for
+  10 minutes), which ends the approval fatigue of 0.2.5 (132 of 136
+  high-context asks approved, often one per tool call). Without a person (`claude -p`, the SDK,
   `dontAsk`), gates refuse as before.
 - **Subagents are judged on their own context.** 0.2.5 read the main
   transcript for a subagent's tool calls, so subagents inherited the parent's

@@ -10,7 +10,7 @@ permissions:
 env:
   # The Claude Code release the mod is validated and tested against. Raise it
   # with the README's "checked against" version.
-  CLAUDE_CODE: "@anthropic-ai/claude-code@2.1.292"
+  CLAUDE_CODE: "@anthropic-ai/claude-code@2.1.295"
 
 jobs:
   test:

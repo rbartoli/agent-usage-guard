@@ -27,7 +27,10 @@ export type AgentRecord = {
 export type LoopState = {
   /** Input tokens of the loop's latest model request: what the next one re-reads. */
   context?: number
-  lastResponseAt?: number
+  /** When the loop last finished a model request or a tool call. */
+  activeAt?: number
+  /** Tool calls the loop has running: an agent in one is running, however long the tool takes. */
+  toolsRunning?: number
   /** Tool calls made while the loop was above the tool-budget threshold. */
   heavyCalls: number[]
   /** The user approved heavy work in this loop until then, or until it compacts. */
@@ -56,6 +59,8 @@ export type SessionState = {
   agents: Record<string, AgentRecord>
   /** Agents the gate allowed that Claude Code has not reported started yet. */
   pendingStarts: number
+  /** Agents that started outside the gate while a gated agent was starting, by id: counted once it has. */
+  unclaimed: Record<string, { at: number; kind: AgentKind }>
   /** This session's agent starts and resumes, newest last. */
   starts: number[]
   /** Tokens each subagent request processed, as [time, tokens]. */
@@ -81,12 +86,13 @@ export type SessionState = {
 
 /** What one session publishes for the others: counts, never content. */
 export type PeerRecord = {
-  v: 1
+  v: 2
   /** When the session last made a model request or changed this record. */
   at: number
   running: number
   starts: number[]
-  agentTokens: number
+  /** Subagent tokens per minute, as [the minute's latest time, tokens], so they age out like starts. */
+  agentTokens: Array<[number, number]>
   dormantResumes: number[]
   limit?: LimitReading
 }
@@ -98,6 +104,7 @@ export function newSession(id: string, canAsk: boolean): SessionState {
     loops: {},
     agents: {},
     pendingStarts: 0,
+    unclaimed: {},
     starts: [],
     agentTokens: [],
     limits: {},
@@ -122,6 +129,11 @@ export function loopOf(state: SessionState, id: LoopId): LoopState {
 
 export function within(times: readonly number[], now: number, windowMs: number): number[] {
   return times.filter((t) => now - t < windowMs)
+}
+
+/** Tokens of the [time, tokens] pairs inside the window. */
+export function tokensWithin(pairs: ReadonlyArray<readonly [number, number]>, now: number, windowMs: number): number {
+  return pairs.reduce((sum, [t, n]) => (now - t < windowMs ? sum + n : sum), 0)
 }
 
 /** Running agents, counting those allowed a moment ago that are still starting. */
@@ -154,17 +166,33 @@ export function prune(state: SessionState, now: number, windowMs: number): void 
 
 /** The record this session publishes for its peers. */
 export function peerRecord(state: SessionState, now: number, windowMs: number): PeerRecord {
-  const tokens = state.agentTokens.filter(([t]) => now - t < windowMs).reduce((sum, [, n]) => sum + n, 0)
   const fiveHour = state.limits.five_hour
   return {
-    v: 1,
+    v: 2,
     at: now,
     running: runningAgents(state),
     starts: within(state.starts, now, windowMs),
-    agentTokens: tokens,
+    agentTokens: perMinute(state.agentTokens, now, windowMs),
     dormantResumes: within(state.dormantResumes, now, windowMs),
     ...(fiveHour ? { limit: fiveHour } : {}),
   }
+}
+
+/** Sums [time, tokens] pairs inside the window per minute, so a record stays small however busy its session. */
+function perMinute(pairs: ReadonlyArray<readonly [number, number]>, now: number, windowMs: number): Array<[number, number]> {
+  const minutes = new Map<number, [number, number]>()
+  for (const [t, n] of pairs) {
+    if (now - t >= windowMs) continue
+    const key = Math.floor(t / 60_000)
+    const minute = minutes.get(key)
+    if (minute) {
+      minute[0] = Math.max(minute[0], t)
+      minute[1] += n
+    } else {
+      minutes.set(key, [t, n])
+    }
+  }
+  return [...minutes.values()]
 }
 
 /**
@@ -186,11 +214,12 @@ function isPeerRecord(value: unknown): value is PeerRecord {
   if (typeof value !== 'object' || value === null) return false
   const r = value as Record<string, unknown>
   return (
-    r.v === 1 &&
+    r.v === 2 &&
     typeof r.at === 'number' &&
     typeof r.running === 'number' &&
     Array.isArray(r.starts) &&
-    typeof r.agentTokens === 'number' &&
+    Array.isArray(r.agentTokens) &&
+    r.agentTokens.every((p) => Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number') &&
     Array.isArray(r.dormantResumes)
   )
 }

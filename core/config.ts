@@ -39,7 +39,7 @@ export type Config = {
   /** Refused agent calls per `fuseMs` that pause agent spawns for `fuseMs`. */
   fuseMax: number
   fuseMs: number
-  /** How long a session's published record counts after its last model request. */
+  /** How long another session's record, or an agent with no sign of activity, still counts. */
   peerTtlMs: number
   journal: boolean
   journalDays: number

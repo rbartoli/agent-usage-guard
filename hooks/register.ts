@@ -39,12 +39,14 @@ import {
   newSession,
   observeAgentActive,
   observeAgentRunEnd,
+  observeAgentStart,
   observeCompaction,
   observeLimits,
   observeMainContext,
   observeResponse,
   observeSpawn,
   observeToolResult,
+  observeToolStart,
   observeTurnEnd,
   parseCommand,
   parseConfig,
@@ -66,7 +68,7 @@ type Api = EngineInterface
 
 const COMMAND = 'agent-guard'
 const PEER_PREFIX = 'peer:'
-const LAST_RESPONSE_PREFIX = 'last-response:'
+const LAST_ACTIVE_PREFIX = 'last-active:'
 const HEARTBEAT_MS = 60_000
 /** Keeps one session's day of journal rows well inside the store's 4 MiB. */
 const MAX_ROWS_PER_DAY = 2000
@@ -74,8 +76,8 @@ const MAX_ROWS_PER_DAY = 2000
 const JOURNAL_BUDGET_BYTES = 2_000_000
 /** A peer record nobody refreshed for a day is from a session that is gone. */
 const STALE_PEER_MS = 86_400_000
-/** A session's last-response time outlives the session by a month, for a later resume. */
-const LAST_RESPONSE_KEEP_MS = 30 * 86_400_000
+/** When a session was last active outlives the session by a month, for a later resume. */
+const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
 
@@ -88,8 +90,8 @@ let askUnavailable = false
 let permissionMode: string | undefined
 let peers: PeerRecord[] = []
 let lastPublished = 0
-/** The last-response time this process last stored, so a heartbeat does not rewrite it. */
-let lastResponseKept: number | undefined
+/** The last-active time this process last stored, so a heartbeat does not rewrite it. */
+let lastActiveKept: number | undefined
 let lastStatus: string | undefined
 let compactAfterTurn = false
 /** A Stop event happened and no prompt has started a new turn since. */
@@ -147,23 +149,15 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.Stop', next.error, () => next(e)))
 
   on('classic.SubagentStart', async ($, e, next) => {
-    if (session.agents[e.agent_id]) {
-      observeAgentActive(session, e.agent_id)
-      await publish($, await $.clock.now())
-    } else if (e.agent_type && session.pendingStarts === 0) {
-      // Started without an agent.spawn the guard could hold, such as a /subtask
-      // fork the user ran: counted, never blocked. Claude Code's own internal
-      // agents have no type and are left out.
-      const now = await $.clock.now()
-      observeSpawn(session, now, { agentId: e.agent_id, kind: e.agent_type === 'fork' ? 'fork' : 'subagent', depth: 1 })
-      session.starts.push(now)
-      await publish($, now)
-    }
+    const now = await $.clock.now()
+    if (observeAgentStart(session, now, e.agent_id, e.agent_type)) await publish($, now)
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.SubagentStart', next.error, () => next(e)))
 
   on('classic.StopFailure', async ($, e, next) => {
     if (config.enabled) {
+      // On StopFailure, last_assistant_message is the failed request's own
+      // error message, the text Claude Code shows, not Claude's earlier prose.
       const text = `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}`
       const kind = lockoutKind(e.error, text, Object.values(session.limits))
       if (kind) {
@@ -175,7 +169,7 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.StopFailure', next.error, () => next(e)))
 
   on('session.end', async ($, e, next) => {
-    await keepLastResponse($)
+    await keepLastActive($)
     try {
       if (session.id) await $.store.delete(PEER_PREFIX + session.id)
     } catch {
@@ -240,11 +234,8 @@ export function register(on: On): void {
     if (compactAfterTurn) {
       compactAfterTurn = false
       $.clock.after(0, async () => {
-        try {
-          await $.session.compact()
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not compact: ${String(error)}`)
-        }
+        const failed = await compact($)
+        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}).`)
       })
     }
     await refreshStatus($)
@@ -301,10 +292,12 @@ export function register(on: On): void {
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       $.clock.after(0, async () => {
-        try {
-          await $.session.compact()
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not compact: ${String(error)}`)
+        // Sending at full size after a failed compaction is the one thing the user chose against.
+        const failed = await compact($)
+        if (failed !== undefined) {
+          $.ui.log(`agent-usage-guard could not compact (${failed}), so your prompt is back in the input box.`)
+          await $.prompt.fill({ text: resend.text }).catch(() => undefined)
+          return
         }
         try {
           await $.prompt.submit({ ...resend, asUser: true })
@@ -331,13 +324,13 @@ export function register(on: On): void {
       await journal($, await $.clock.now(), { ev: 'deny', rule: verdict.rule, tool: 'Agent', n: refusalNumber(verdict.message) })
       return { deny: verdict.message }
     }
-    let started = false
+    let started: string | undefined
     try {
       const result = await next(e)
-      started = !result.deny && Boolean(result.agentId)
-      if (started && result.agentId) {
+      if (!result.deny && result.agentId) {
+        started = result.agentId
         const kind = e.isTeammate ? 'teammate' : e.workflow ? 'workflow' : e.fork ? 'fork' : 'subagent'
-        observeSpawn(session, await $.clock.now(), { agentId: result.agentId, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
+        observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
       }
       return result
     } finally {
@@ -388,19 +381,20 @@ export function register(on: On): void {
       }
     }
 
+    observeToolStart(session, loop)
     let result: Awaited<ReturnType<typeof next>> | undefined
     try {
       result = await next(e)
+      return result
     } finally {
+      observeToolResult(session, await $.clock.now(), loop, print, Boolean(result?.isError) && !result?.deny)
       if (resumed) {
         const delivered = result !== undefined && !result.deny && !result.isError
-        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered)
+        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined)
         if (delivered) observeAgentActive(session, resumed.id)
         await publish($, await $.clock.now())
       }
     }
-    observeToolResult(session, await $.clock.now(), loop, print, Boolean(result.isError) && !result.deny)
-    return result
   }).catch(($, e, next) => failOpen($, 'tool.call', next.error, () => next(e)))
 
   on('command.run', { command: COMMAND }, async ($, e) => {
@@ -459,11 +453,11 @@ async function startSession($: Api): Promise<void> {
   const previous = session.id
   const id = await $.session.id()
   if (previous && previous !== id) {
-    await keepLastResponse($)
+    await keepLastActive($)
     await $.store.delete(PEER_PREFIX + previous).catch(() => undefined)
   }
   session = newSession(id, canAsk())
-  lastResponseKept = undefined
+  lastActiveKept = undefined
   journalCache = undefined
   stopSeen = false
   compactAfterTurn = false
@@ -487,9 +481,9 @@ async function housekeeping($: Api): Promise<void> {
       const record = (await $.store.get(key)) as { at?: unknown } | undefined
       if (typeof record?.at !== 'number' || now - record.at > STALE_PEER_MS) await $.store.delete(key)
     }
-    for (const key of keys.filter((k) => k.startsWith(LAST_RESPONSE_PREFIX))) {
+    for (const key of keys.filter((k) => k.startsWith(LAST_ACTIVE_PREFIX))) {
       const at = await $.store.get(key)
-      if (typeof at !== 'number' || now - at > LAST_RESPONSE_KEEP_MS) await $.store.delete(key)
+      if (typeof at !== 'number' || now - at > LAST_ACTIVE_KEEP_MS) await $.store.delete(key)
     }
   } catch (error) {
     $.ui.log(`agent-usage-guard housekeeping failed: ${String(error)}`, { to: 'debug' })
@@ -525,23 +519,23 @@ async function publish($: Api, now: number): Promise<void> {
   } catch (error) {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
-  await keepLastResponse($)
+  await keepLastActive($)
 }
 
 /**
- * Stores when the main conversation last had a response, so a later process
+ * Stores when the main conversation was last active, so a later process
  * that resumes the session knows how long it sat idle. The transcript cannot
  * say: Claude Code rewrites its modification time on resume, and hourly while
  * the session is open.
  */
-async function keepLastResponse($: Api): Promise<void> {
-  const last = session.loops[MAIN]?.lastResponseAt
-  if (!session.id || last === undefined || last === lastResponseKept) return
+async function keepLastActive($: Api): Promise<void> {
+  const last = session.loops[MAIN]?.activeAt
+  if (!session.id || last === undefined || last === lastActiveKept) return
   try {
-    await $.store.set(LAST_RESPONSE_PREFIX + session.id, last)
-    lastResponseKept = last
+    await $.store.set(LAST_ACTIVE_PREFIX + session.id, last)
+    lastActiveKept = last
   } catch (error) {
-    $.ui.log(`agent-usage-guard could not store the last response time: ${String(error)}`, { to: 'debug' })
+    $.ui.log(`agent-usage-guard could not store when the session was last active: ${String(error)}`, { to: 'debug' })
   }
 }
 
@@ -567,12 +561,12 @@ async function readMainContext($: Api): Promise<void> {
   }
 }
 
-/** Time since the main conversation's last response: in this process, or, after a resume, in the one before. */
+/** Time since the main conversation was last active: in this process, or, after a resume, in the one before. */
 async function idleTime($: Api, now: number): Promise<number | undefined> {
-  const last = session.loops[MAIN]?.lastResponseAt
+  const last = session.loops[MAIN]?.activeAt
   if (last !== undefined) return now - last
   try {
-    const kept = await $.store.get(LAST_RESPONSE_PREFIX + session.id)
+    const kept = await $.store.get(LAST_ACTIVE_PREFIX + session.id)
     return typeof kept === 'number' ? now - kept : undefined
   } catch {
     return undefined
@@ -596,18 +590,34 @@ type Asked = { answer: string | undefined; unavailable: boolean }
 
 /**
  * Asks in Claude Code's own question dialog. `answer` is undefined when the
- * user dismissed it. `unavailable` means the question could not be asked at
- * all, because the session has no AskUserQuestion tool: from then on the
- * session counts as one nobody can answer, and the gate decides alone.
+ * dialog came back without one: the user dismissed it. `unavailable` means the
+ * question could not be asked at all, because the session has no
+ * AskUserQuestion tool: from then on the session counts as one nobody can
+ * answer, and the gate decides alone. Any other failure, such as the turn
+ * being interrupted while the dialog was open, is not the user's answer: it
+ * is rethrown, and the hook fails open.
  */
 async function askUser($: Api, ask: Ask): Promise<Asked> {
   try {
     return { answer: await $.ui.ask(ask.question, { options: ask.options, header: HEADER }), unavailable: false }
   } catch (error) {
-    if (!/no tool named "AskUserQuestion"/.test(String(error))) return { answer: undefined, unavailable: false }
-    askUnavailable = true
-    session.canAsk = false
-    return { answer: undefined, unavailable: true }
+    const text = String(error)
+    if (/no tool named "AskUserQuestion"/.test(text)) {
+      askUnavailable = true
+      session.canAsk = false
+      return { answer: undefined, unavailable: true }
+    }
+    if (/\$\.ui\.ask: no answer\b/.test(text)) return { answer: undefined, unavailable: false }
+    throw error
+  }
+}
+
+/** Compacts the conversation. Returns why it did not, or undefined once it has. */
+async function compact($: Api): Promise<string | undefined> {
+  try {
+    return (await $.session.compact()).skip
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
   }
 }
 
