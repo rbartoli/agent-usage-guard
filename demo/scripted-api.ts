@@ -102,11 +102,12 @@ const SCRIPTS: Script[] = [
       { text: 'Four audits are running. You held the README audit; I will start it when one of them finishes.', context: 71_500 },
     ],
   },
+  // The audits are still running when the scene ends, as the reply above says.
   ...AUDITS.map(([, prompt]): Script => ({
     prompt,
     replies: [
       { tools: [file(prompt.includes('Dockerfile') ? 'deploy/Dockerfile' : prompt.includes('database') ? 'src/database.py' : prompt.includes('README') ? 'README.md' : 'src/auth.py')], context: 9_400, delayMs: 1_500 },
-      { text: 'Done: one finding, reported to the main conversation.', context: 10_900, delayMs: 6_000 },
+      { text: 'Done: one finding, reported to the main conversation.', context: 10_900, delayMs: 30_000 },
     ],
   })),
 

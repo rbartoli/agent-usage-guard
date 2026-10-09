@@ -1,4 +1,6 @@
 # Shared by every scene. demo/render.sh runs the scenes and builds the GIF.
+# A scene holds the guard's dialog, and the screen that follows the answer,
+# long enough to read at about 20 characters a second.
 Set Shell "bash"
 Set Width 1200
 Set Height 640
