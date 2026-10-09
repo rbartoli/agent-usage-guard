@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The dormant gate works on resumed sessions.** It timed a resumed session's
+  idleness from the transcript's modification time, which Claude Code rewrites
+  when it resumes a session and hourly while one is open, so `claude --resume`
+  and `--continue` never asked before re-writing an expired cache. Each session
+  now stores the time of its last response in the mod store for 30 days, and a
+  resume reads it from there. Found while recording the README demo: a
+  485k-token session resumed after two hours sent its prompt without asking.
+
 ## 1.0.0 — 2026-10-07
 
 Rebuilt as a Claude Code mod (Claude Code v2.1.287 or later). The Python command

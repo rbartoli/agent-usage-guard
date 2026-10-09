@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { T0, journalRows, start, world } from './harness.ts'
+import { SESSION_ID, T0, journalRows, respond, start, world } from './harness.ts'
 
 const HOUR = 3_600_000
 const typed = (text: string) => ({ text, origin: { kind: 'composer' }, wait: false }) as never
@@ -64,26 +64,31 @@ describe('heavy prompt', () => {
 })
 
 describe('dormant resume', () => {
-  test('a heavy session idle for two hours asks before re-writing its cache', async ($, on) => {
-    const w = world(on, { answers: ['Send anyway'], contextTokens: 200_000, transcriptMtime: T0 - 2 * HOUR })
+  test('a heavy session resumed two hours after its last response asks before re-writing its cache', async ($, on) => {
+    const w = world(on, { answers: ['Send anyway'], contextTokens: 200_000 })
     await start($, w, true)
+    await respond($, w, 200_000)
+    await $.session.end({ reason: 'exit' } as never)
+    await w.clock.advance(2 * HOUR)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
     expect(w.questions[0]).toBe('This session was idle for 2 h, so its prompt cache has likely expired and this request re-writes about 200k tokens. Send this prompt?')
   })
 
-  test('a light or recently active session is not asked', async ($, on) => {
-    const w = world(on, { contextTokens: 100_000, transcriptMtime: T0 - 2 * HOUR })
+  test('a light session, or one with no recorded response, is not asked', async ($, on) => {
+    const w = world(on, { contextTokens: 100_000, store: { [`last-response:${SESSION_ID}`]: T0 - 2 * HOUR } })
     await start($, w, true)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
+    w.store.delete(`last-response:${SESSION_ID}`)
     w.setContext(200_000)
+    expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
     expect(w.questions).toEqual([])
   })
 
   test('headless: one heavy dormant resume per window on the machine', async ($, on) => {
     const peer = { v: 1, at: T0 - 60_000, running: 0, starts: [], agentTokens: 0, dormantResumes: [T0 - 60_000] }
-    const w = world(on, { contextTokens: 200_000, transcriptMtime: T0 - 2 * HOUR, store: { 'peer:other': peer } })
+    const w = world(on, { contextTokens: 200_000, store: { 'peer:other': peer, [`last-response:${SESSION_ID}`]: T0 - 2 * HOUR } })
     await start($, w, false)
     await $.classic.SessionStart({ source: 'resume', transcript_path: '/t.jsonl' } as never)
     const result = (await $.prompt.submit(headless('continue'))) as Record<string, unknown>

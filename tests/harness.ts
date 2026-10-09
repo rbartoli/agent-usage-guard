@@ -21,7 +21,6 @@ export type WorldOptions = {
   toolResult?: (e: ToolEvent) => Record<string, unknown>
   /** What `$.session.usage()` reports for the main context. */
   contextTokens?: number
-  transcriptMtime?: number
 }
 
 export type World = {
@@ -82,11 +81,6 @@ export function world(on: On, options: WorldOptions = {}): World {
     w.compactions += 1
     return { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 } as never
   })
-  on('fs.stat', () =>
-    options.transcriptMtime === undefined
-      ? { deny: 'no such file' }
-      : { value: { kind: 'file', size: 1, mtimeMs: options.transcriptMtime, isLink: false } },
-  )
   on('ui.log', ($, e) => {
     w.logs.push(e.text)
     return { value: undefined }

@@ -66,6 +66,7 @@ type Api = EngineInterface
 
 const COMMAND = 'agent-guard'
 const PEER_PREFIX = 'peer:'
+const LAST_RESPONSE_PREFIX = 'last-response:'
 const HEARTBEAT_MS = 60_000
 /** Keeps one session's day of journal rows well inside the store's 4 MiB. */
 const MAX_ROWS_PER_DAY = 2000
@@ -73,6 +74,8 @@ const MAX_ROWS_PER_DAY = 2000
 const JOURNAL_BUDGET_BYTES = 2_000_000
 /** A peer record nobody refreshed for a day is from a session that is gone. */
 const STALE_PEER_MS = 86_400_000
+/** A session's last-response time outlives the session by a month, for a later resume. */
+const LAST_RESPONSE_KEEP_MS = 30 * 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
 
@@ -83,9 +86,10 @@ let interactive = false
 /** The session has no AskUserQuestion tool (`--tools` left it out), so nobody can be asked. */
 let askUnavailable = false
 let permissionMode: string | undefined
-let transcriptPath: string | undefined
 let peers: PeerRecord[] = []
 let lastPublished = 0
+/** The last-response time this process last stored, so a heartbeat does not rewrite it. */
+let lastResponseKept: number | undefined
 let lastStatus: string | undefined
 let compactAfterTurn = false
 /** A Stop event happened and no prompt has started a new turn since. */
@@ -114,7 +118,6 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'session.start', next.error, () => next(e)))
 
   on('classic.SessionStart', async ($, e, next) => {
-    transcriptPath = e.transcript_path
     if (e.source === 'compact') observeCompaction(session)
     if (e.source === 'clear' || e.source === 'resume' || e.source === 'fork') await startSession($)
     return next(e)
@@ -172,6 +175,7 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.StopFailure', next.error, () => next(e)))
 
   on('session.end', async ($, e, next) => {
+    await keepLastResponse($)
     try {
       if (session.id) await $.store.delete(PEER_PREFIX + session.id)
     } catch {
@@ -454,8 +458,12 @@ async function loadConfig($: Api): Promise<void> {
 async function startSession($: Api): Promise<void> {
   const previous = session.id
   const id = await $.session.id()
-  if (previous && previous !== id) await $.store.delete(PEER_PREFIX + previous).catch(() => undefined)
+  if (previous && previous !== id) {
+    await keepLastResponse($)
+    await $.store.delete(PEER_PREFIX + previous).catch(() => undefined)
+  }
   session = newSession(id, canAsk())
+  lastResponseKept = undefined
   journalCache = undefined
   stopSeen = false
   compactAfterTurn = false
@@ -478,6 +486,10 @@ async function housekeeping($: Api): Promise<void> {
     for (const key of keys.filter((k) => k.startsWith(PEER_PREFIX))) {
       const record = (await $.store.get(key)) as { at?: unknown } | undefined
       if (typeof record?.at !== 'number' || now - record.at > STALE_PEER_MS) await $.store.delete(key)
+    }
+    for (const key of keys.filter((k) => k.startsWith(LAST_RESPONSE_PREFIX))) {
+      const at = await $.store.get(key)
+      if (typeof at !== 'number' || now - at > LAST_RESPONSE_KEEP_MS) await $.store.delete(key)
     }
   } catch (error) {
     $.ui.log(`agent-usage-guard housekeeping failed: ${String(error)}`, { to: 'debug' })
@@ -513,6 +525,24 @@ async function publish($: Api, now: number): Promise<void> {
   } catch (error) {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
+  await keepLastResponse($)
+}
+
+/**
+ * Stores when the main conversation last had a response, so a later process
+ * that resumes the session knows how long it sat idle. The transcript cannot
+ * say: Claude Code rewrites its modification time on resume, and hourly while
+ * the session is open.
+ */
+async function keepLastResponse($: Api): Promise<void> {
+  const last = session.loops[MAIN]?.lastResponseAt
+  if (!session.id || last === undefined || last === lastResponseKept) return
+  try {
+    await $.store.set(LAST_RESPONSE_PREFIX + session.id, last)
+    lastResponseKept = last
+  } catch (error) {
+    $.ui.log(`agent-usage-guard could not store the last response time: ${String(error)}`, { to: 'debug' })
+  }
 }
 
 /** Reads the other sessions' records; a failure leaves the last ones read. */
@@ -537,14 +567,13 @@ async function readMainContext($: Api): Promise<void> {
   }
 }
 
-/** Time since the last model response, or since the transcript last changed after a resume. */
+/** Time since the main conversation's last response: in this process, or, after a resume, in the one before. */
 async function idleTime($: Api, now: number): Promise<number | undefined> {
   const last = session.loops[MAIN]?.lastResponseAt
   if (last !== undefined) return now - last
-  if (!transcriptPath) return undefined
   try {
-    const stat = await $.fs.stat(transcriptPath)
-    return now - stat.mtimeMs
+    const kept = await $.store.get(LAST_RESPONSE_PREFIX + session.id)
+    return typeof kept === 'number' ? now - kept : undefined
   } catch {
     return undefined
   }

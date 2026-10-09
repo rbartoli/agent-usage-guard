@@ -110,7 +110,7 @@ The report counts usage-limit lockouts per week, plan-window threshold crossings
 A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is small enough to audit, and `claude plugin validate .` lists every API it calls:
 
 - It makes no network requests and starts no processes.
-- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, token totals, its latest 5-hour reading) and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
+- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, token totals, its latest 5-hour reading), the time of its last response (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
 - Journal days older than 90 days are deleted (`AGENT_GUARD_JOURNAL_DAYS`).
 
