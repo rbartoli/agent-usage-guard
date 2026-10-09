@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Builds assets/agent-usage-guard.gif: records each scene with VHS, puts its
-# caption above it, and joins the scenes. The scenes run demo/run-demo.sh, so
-# Claude Code talks only to the scripted local API.
+# Builds the README's GIF, demo/out/agent-usage-guard.gif: records each scene
+# with VHS, puts its caption above it, and joins the scenes. The scenes run
+# demo/run-demo.sh, so Claude Code talks only to the scripted local API.
 #
 #   demo/render.sh           record every scene, then build the GIF
 #   demo/render.sh --reuse   build the GIF from the recordings in demo/out
+#
+# The README shows the GIF from a release, so installs do not copy it. To
+# publish a new one, attach it to a release with `gh release upload <tag>
+# demo/out/agent-usage-guard.gif` and point the README's image at that tag.
 #
 # Needs VHS 0.11, ttyd, ffmpeg, ImageMagick and the DejaVu fonts, plus what
 # demo/run-demo.sh needs.
@@ -52,5 +56,6 @@ for i in "${!scenes[@]}"; do
   joined+="[s$i]"
 done
 graph+="${joined}concat=n=${#scenes[@]}:v=1:a=0,split[a][b];[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
-ffmpeg -v error -y "${inputs[@]}" -filter_complex "$graph" assets/agent-usage-guard.gif
-echo "assets/agent-usage-guard.gif: $(du -k assets/agent-usage-guard.gif | cut -f1) KB"
+gif=demo/out/agent-usage-guard.gif
+ffmpeg -v error -y "${inputs[@]}" -filter_complex "$graph" "$gif"
+echo "$gif: $(du -k "$gif" | cut -f1) KB"

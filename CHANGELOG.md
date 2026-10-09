@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **An icon for the plugin directory listing:** `.claude-plugin/icon.png`.
+- **Installs no longer copy the demo GIF.** The README shows the 2.9 MB GIF
+  from the v1.0.0 release instead of the repository, and `demo/render.sh`
+  writes it to `demo/out/`.
+- **Security and privacy answers what the plugin directory's validation
+  asks:** what the mod decides, the one prompt it submits (yours, after
+  "Compact, then send"), what its prompt and `SessionStart` hooks change, and
+  that `demo/` reads no credentials.
+
 ## 1.0.0 — 2026-10-09
 
 Rebuilt as a Claude Code mod (Claude Code v2.1.287 or later). The Python command
