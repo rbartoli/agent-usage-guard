@@ -24,11 +24,11 @@ headlines=(
   'Four agents processed 10.9M tokens, and Claude wants a fifth'
 )
 
-# A caption bar as wide as the recording: the scene's label in the lavender of
-# the guard's question chip, its headline, and one progress mark per scene.
+# A caption bar as wide as the recording: the scene's label in the brand
+# accent, its headline, and one progress mark per scene.
 caption() {
   local out=$1 index=$2 label=$3 headline=$4
-  local width=1200 height=84 accent='#afb8f9' color x
+  local width=1200 height=84 accent='#0091FF' color x
   local args=(-size "${width}x${height}" xc:'#0c0f16'
     -font DejaVu-Sans-Mono-Bold -pointsize 15 -kerning 1.5 -fill "$accent" -annotate +28+30 "$label"
     -font DejaVu-Sans-Bold -pointsize 25 -kerning 0 -fill '#f0f6fc' -annotate +28+65 "$headline"
