@@ -5,11 +5,11 @@
 `agent-usage-guard` is a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview): it runs inside Claude Code and holds runaway spend before it happens. It reads your plan's live usage, and it holds subagent fan-out, heavy-context churn and retry loops.
 
 <p align="center">
-  <img src="assets/agent-usage-guard.gif" alt="Claude Code's own question dialog carrying agent-usage-guard's question, raised when a fifth parallel audit agent hit the four-agent limit." width="900">
+  <img src="assets/agent-usage-guard.gif" alt="Four scenes in Claude Code's interactive UI. The guard asks before a prompt re-writes the expired cache of a 486k-token session resumed after two hours, before a fifth parallel agent starts against a limit of four, before a twenty-first tool call at 433k context, and before a new agent once subagents have processed 10.9M tokens." width="900">
 </p>
 
 <p align="center">
-  <sub>Recorded from Claude Code's interactive UI against the fictional <a href="demo/fixture/northstar-api">Northstar API fixture</a>. The question on screen is the guard's own, not the model describing it. <a href="demo/agent-usage-guard.tape">Reproduce it with VHS</a> (contacts Claude and uses a little usage).</sub>
+  <sub>Recorded from Claude Code's interactive UI with the guard loaded. A <a href="demo/scripted-api.ts">scripted local API</a> stands in for Claude, so the sessions and token counts are staged and no usage is spent. Every question on screen is the guard's own. <a href="demo/render.sh">Rebuild it</a> from the <a href="demo/fixture/northstar-api">Northstar fixture</a>.</sub>
 </p>
 
 It acts before the spend, not after it: before an agent starts, a prompt is sent, or a tool call runs. Agent limits hold across every Claude Code session on your machine, and fan-out and heavy context are capped at any usage level, not only near the limit. When you are at the keyboard it asks you, in Claude Code's own question dialog. When nobody can answer, it refuses and tells Claude why, so the model can wait, batch the work, or stop. `/agent-guard report` shows what it did.

@@ -29,10 +29,10 @@ jobs:
         run: claude plugin test
       - name: Check JSON manifests
         run: |
-          for file in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json demo/empty-mcp.json tsconfig.json; do
+          for file in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json tsconfig.json; do
             node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$file"
           done
-      - name: Check the demo launcher
+      - name: Check the demo scripts
         run: |
-          bash -n demo/run-demo.sh
-          shellcheck demo/run-demo.sh
+          for script in demo/run-demo.sh demo/render.sh; do bash -n "$script"; done
+          shellcheck demo/run-demo.sh demo/render.sh
