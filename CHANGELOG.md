@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-10-09
 
 - **"Compact, then send" empties the input box when the put-back is late.**
   The guard took the prompt out of the box only once, at the start of the
