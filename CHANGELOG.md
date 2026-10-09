@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 — 2026-10-09
 
 - **The status line clears when what it shows runs out.** The guard redrew it
   only when the session did something, so a session that sat idle across a
