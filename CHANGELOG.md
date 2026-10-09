@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 — 2026-10-10
 
 - **The report counts each locked window once.** It counted every request
   that failed on a usage limit, so retries and parallel sessions hitting the
