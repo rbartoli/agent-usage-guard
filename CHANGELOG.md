@@ -7,6 +7,13 @@
   `claude plugin tag --push` and publishes its GitHub release, with that
   version's section of this changelog as the notes. A release is now a PR
   that bumps the version and dates its section.
+- **The demo renders as an MP4 that stays readable in a feed.**
+  `demo/render.sh` also writes `demo/out/agent-usage-guard.mp4`: 1440×1440
+  at about 70 columns, a terminal window on a margin, recorded straight to
+  H.264. The earlier post video was converted from the 95-column GIF, so a
+  feed showing it 660 px wide put the text at about 11 px. The GIF comes
+  from the same recordings at 960 px, and `demo/render.sh <scene>` records
+  only the named scenes.
 
 ## 1.0.3 — 2026-10-10
 
