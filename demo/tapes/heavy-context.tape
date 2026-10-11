@@ -1,7 +1,7 @@
 # Twenty tool calls in a row at 431k context: the twenty-first asks, and
 # "Compact after this turn" lets the turn finish, then compacts.
 Source demo/tapes/settings.tape
-Output demo/out/heavy-context.gif
+Output demo/out/heavy-context.mp4
 Hide
 Type "demo/run-demo.sh heavy-context" Enter
 Wait+Screen /Is samesite set anywhere else\?/
@@ -11,7 +11,7 @@ Sleep 600ms
 Type "Check every caller before we change the cookie flags."
 Sleep 500ms
 Enter
-Wait+Screen /Keep working at/
+Wait+Screen /Enter to select/
 Sleep 9.5s
 Down
 Sleep 1.2s

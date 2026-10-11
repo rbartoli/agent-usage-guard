@@ -1,7 +1,7 @@
 # A heavy session resumed after two hours: the guard asks before the first
 # prompt re-writes its expired cache, and "Compact, then send" shrinks it first.
 Source demo/tapes/settings.tape
-Output demo/out/cold-cache.gif
+Output demo/out/cold-cache.mp4
 Hide
 Type "demo/run-demo.sh cold-cache" Enter
 Wait+Screen /Which tests cover it\?/
@@ -11,10 +11,10 @@ Sleep 600ms
 Type "Wire secure_cookies through and fix the README claim."
 Sleep 500ms
 Enter
-Wait+Screen /Send this prompt\?/
+Wait+Screen /Enter to select/
 Sleep 9s
 Enter
-Wait+Screen /Secure only when it is set/
+Wait+Screen /now takes secure/
 Sleep 6.5s
 Hide
 Ctrl+C
