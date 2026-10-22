@@ -276,6 +276,19 @@ describe('switches', () => {
     expect(status.text).toBe('Off: AGENT_GUARD is set to turn it off.')
   })
 
+  test('the status names the version of the copy that runs', async ($, on) => {
+    const w = world(on)
+    const reads: string[] = []
+    on('fs.read', ($, e) => {
+      reads.push(e.path)
+      return { value: '{ "name": "agent-usage-guard", "version": "9.9.9" }' }
+    })
+    await start($, w, false)
+    const status = await $.command.run({ command: 'agent-guard', args: 'status' } as never)
+    expect(status.text).toMatch(/^On \(9\.9\.9\)\.\n/)
+    expect(reads).toEqual([expect.stringMatching(/\/\.claude-plugin\/plugin\.json$/)])
+  })
+
   test('a malformed threshold keeps its default and shows up in the status', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_AGENT_MAX: 'lots' } })
     await start($, w, false)

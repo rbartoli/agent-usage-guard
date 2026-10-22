@@ -112,7 +112,7 @@ The report counts usage-limit lockouts (each locked window once), plan-window th
 
 A mod runs inside Claude Code with your permissions; read [what a mod can reach](https://code.claude.com/docs/en/plugins/mods/overview#what-a-mod-can-reach) before you install one. This one is about 2,400 lines of TypeScript with no dependencies, and `claude plugin validate .` lists every API it calls and every environment variable it reads:
 
-- It makes no network requests and starts no processes.
+- It makes no network requests and starts no processes. The only file it reads is its own `plugin.json`, for the version `/agent-guard status` shows.
 - It decides only what the rules above describe: whether an agent starts, a prompt is sent, or a tool call runs. It asks you whenever you can answer, and gives the reason when it refuses. It reads permission modes but never changes them, and it writes no settings.
 - The only prompt it submits is your own: after "Compact, then send", it sends the prompt you typed, unchanged, once compaction finishes.
 - Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k or a plan window reaches 95%, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.

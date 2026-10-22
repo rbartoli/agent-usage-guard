@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`/agent-guard status` names the version that runs.** Its first line reads
+  `On (1.1.0).`, from the loaded copy's own `plugin.json`, so after
+  `claude plugin update` and `/reload-plugins` it shows which copy a session
+  runs. Before, the status read the same in every version.
+
 ## 1.1.0 — 2026-10-23
 
 - **From 95%, each session winds down.** Once a plan window on this machine
