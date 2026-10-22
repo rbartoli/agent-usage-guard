@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 — 2026-10-23
 
 - **A resumed subagent counts as one start.** Since Claude Code 2.1.299, a
   `SendMessage` resume also raises `agent.spawn`, inside the same call. The
@@ -11,7 +11,7 @@
   there as a resume, and every refusal of one says it was not resumed rather
   than not started.
 - **`/agent-guard status` names the version that runs.** Its first line reads
-  `On (1.1.0).`, from the loaded copy's own `plugin.json`, so after
+  `On (1.1.1).`, from the loaded copy's own `plugin.json`, so after
   `claude plugin update` and `/reload-plugins` it shows which copy a session
   runs. Before, the status read the same in every version.
 
