@@ -136,6 +136,18 @@ describe('dormant resume', () => {
     expect(w.questions[0]).toBe('This session was idle for 2 h, so its prompt cache has likely expired and this request re-writes about 200k tokens. Send this prompt?')
   })
 
+  test("a heavy session Claude Code compacted while idle is not asked", async ($, on) => {
+    const w = world(on, { contextTokens: 250_000 })
+    await start($, w, true)
+    await respond($, w, 250_000)
+    await w.clock.advance(HOUR - 6 * 60_000) // idle compaction runs about 54 minutes in
+    await $.classic.PostCompact({ trigger: 'auto' } as never)
+    w.setContext(20_000)
+    await w.clock.advance(HOUR)
+    expect(await $.prompt.submit(typed('continue'))).toEqual({ text: 'continue' })
+    expect(w.questions).toEqual([])
+  })
+
   test('a light session, or one with no recorded response, is not asked', async ($, on) => {
     const w = world(on, { contextTokens: 100_000, store: { [`last-active:${SESSION_ID}`]: T0 - 2 * HOUR } })
     await start($, w, true)
@@ -182,6 +194,76 @@ describe('context warning', () => {
     const w = world(on, { contextTokens: 120_000 })
     await start($, w, true)
     expect(await $.prompt.submit(typed('a'))).toEqual({ text: 'a' })
+  })
+})
+
+describe('wind-down note', () => {
+  const RESETS = '2027-01-15T15:00:00.000Z'
+  const measure = (percent: number, resetsAt = RESETS) => ({
+    context: { window: 1_000_000 },
+    rateLimits: [{ kind: 'five_hour', percentUsed: percent, resetsAt }],
+    changed: ['rateLimits'],
+  })
+  const WIND_DOWN = /^agent-usage-guard: the 5-hour window is 96% used \(resets \d\d:\d\d\)\. Finish the step in progress, start nothing large, and end this turn with a short summary of what is done and what is left/
+
+  test('from 95% Claude is told once to finish the step and hand over, and the report counts it', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    const first = (await $.prompt.submit(typed('a'))) as Record<string, unknown>
+    expect(first.context).toEqual([expect.stringMatching(WIND_DOWN)])
+    expect(await $.prompt.submit(typed('b'))).toEqual({ text: 'b' })
+    expect(journalRows(w).filter((r) => r.ev === 'note')).toEqual([expect.objectContaining({ rule: 'wind-down', kind: 'five_hour', pct: 96 })])
+    const report = await $.command.run({ command: 'agent-guard', args: 'report 7' } as never)
+    expect(report.text).toMatch(/Wind-down notes: 1 in 1 session/)
+  })
+
+  test("another session's reading reaches an idle session's next prompt", async ($, on) => {
+    const limit = { at: T0 - 60_000, kind: 'five_hour', percent: 96, resetsAt: Date.parse(RESETS) }
+    const peer = { v: 2, at: T0 - 60_000, running: 0, starts: [], agentTokens: [], dormantResumes: [], limit }
+    const w = world(on, { store: { 'peer:other': peer } })
+    await start($, w, false)
+    const result = (await $.prompt.submit(headless('go'))) as Record<string, unknown>
+    expect(result.context).toEqual([expect.stringMatching(WIND_DOWN)])
+  })
+
+  test('below 95% nothing is added, and a new window past it is told again', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(94) as never)
+    expect(await $.prompt.submit(typed('a'))).toEqual({ text: 'a' })
+    await $.session.measure(measure(96) as never)
+    expect(((await $.prompt.submit(typed('b'))) as Record<string, unknown>).context).toEqual([expect.stringMatching(WIND_DOWN)])
+    await w.clock.advance(4 * HOUR)
+    await $.session.measure(measure(10, '2027-01-15T20:00:00.000Z') as never)
+    expect(await $.prompt.submit(typed('c'))).toEqual({ text: 'c' })
+    await $.session.measure(measure(96, '2027-01-15T20:00:00.000Z') as never)
+    expect(((await $.prompt.submit(typed('d'))) as Record<string, unknown>).context).toEqual([expect.stringMatching(WIND_DOWN)])
+  })
+
+  test("a background task's notification leaves the note for the user's next prompt", async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    const note = { text: '<task-notification>done</task-notification>', origin: { kind: 'task-notification' }, wait: false } as never
+    expect(await $.prompt.submit(note)).toEqual({ text: '<task-notification>done</task-notification>' })
+    expect(((await $.prompt.submit(typed('next'))) as Record<string, unknown>).context).toEqual([expect.stringMatching(WIND_DOWN)])
+  })
+
+  test('with the context warning, both reach Claude in one note', async ($, on) => {
+    const w = world(on, { contextTokens: 310_000 })
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    const result = (await $.prompt.submit(typed('a'))) as Record<string, unknown>
+    expect(result.context).toEqual([expect.stringMatching(/^agent-usage-guard: this session's context is 310k tokens\..*\nagent-usage-guard: the 5-hour window is 96% used/s)])
+  })
+
+  test('a prompt sent after the heavy-context question carries the note', async ($, on) => {
+    const w = world(on, { answers: ['Send anyway'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    const result = (await $.prompt.submit(typed('a'))) as Record<string, unknown>
+    expect(String(result.context)).toMatch(/the 5-hour window is 96% used/)
   })
 })
 

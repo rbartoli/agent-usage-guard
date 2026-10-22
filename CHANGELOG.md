@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **From 95%, each session winds down.** Once a plan window on this machine
+  reaches `AGENT_GUARD_LIMIT_DENY_PERCENT` (95%), the point at which new agents
+  are refused, the next prompt in each session carries one note for Claude:
+  finish the step in progress, start nothing large, and end the turn with
+  what is done and what is left. Lockouts since 1.0 came from many main
+  sessions running in parallel, which no rule held; a lockout now finds them at
+  a clean stop. A session is told again only after the window falls back
+  below the threshold, such as after its reset. The prompt gate now reads
+  every session's plan reading, so an idle session hears of a window another
+  session filled. The journal records each note, and `/agent-guard report`
+  counts them.
+- **Idle compaction is documented, and pinned by a test.** Claude Code 2.1.299
+  compacts a conversation of 200k tokens or more before its one-hour cache
+  expires. The guard reads the compacted size, so the dormant question does
+  not apply to that session; a test now covers it. The README says which
+  sessions the dormant question still covers.
 - **CI publishes each release.** When the tests pass on `main` and the
   version in `plugin.json` has no tag yet, CI tags the commit with
   `claude plugin tag --push` and publishes its GitHub release, with that

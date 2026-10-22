@@ -29,9 +29,9 @@ export {
   type PromptOutcome,
   type PromptRequest,
   type PromptSource,
-  contextNote,
   markerScope,
   promptGate,
+  promptNotes,
   resolvePromptAsk,
 } from './prompts.ts'
 export {
