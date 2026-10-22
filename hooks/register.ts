@@ -23,13 +23,13 @@ import {
   applyOverride,
   canonical,
   contextBucket,
-  contextNote,
   defaultConfig,
   expireAgents,
   fingerprint,
   formatReport,
   heldForQuestion,
   helpText,
+  highestLimit,
   isJournalRow,
   journalKey,
   livePeers,
@@ -51,6 +51,7 @@ import {
   parseConfig,
   peerRecord,
   promptGate,
+  promptNotes,
   prune,
   releaseStart,
   reserveStart,
@@ -265,12 +266,18 @@ export function register(on: On): void {
 
     await readMainContext($)
     const context = session.loops[MAIN]?.context
-    if (context !== undefined && context >= Math.min(config.dormantContext, config.contextHard)) {
-      await loadPeers($, now)
-    }
+    // Other sessions' plan readings are fresher than an idle session's own.
+    if (source !== 'other') await loadPeers($, now)
     const gate = async (at: number): Promise<Verdict> =>
       promptGate(session, peers, config, at, { source, text: e.text, idleMs: await idleTime($, at) })
-    const send = (note: string | undefined) => (note ? next({ ...e, context: [...(e.context ?? []), note] }) : next(e))
+    const woundDown = session.windDown
+    const send = async (note: string | undefined) => {
+      if (session.windDown && !woundDown) {
+        const limit = highestLimit(session, peers, now)
+        await journal($, now, { ev: 'note', rule: 'wind-down', ...(limit ? { kind: limit.kind, pct: limit.percent } : {}) })
+      }
+      return note ? next({ ...e, context: [...(e.context ?? []), note] }) : next(e)
+    }
     const verdict = await gate(now)
     if (session.dormantResumes.at(-1) === now) await publish($, now)
     stopSeen = false
@@ -292,7 +299,7 @@ export function register(on: On): void {
     }
     const outcome = resolvePromptAsk(session, verdict, asked.answer)
     await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
-    if (outcome.kind === 'allow') return send(contextNote(session, config))
+    if (outcome.kind === 'allow') return send(promptNotes(session, peers, config, asked.at))
     if (outcome.kind === 'compact-then-send') {
       const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
       // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.

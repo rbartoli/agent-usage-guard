@@ -45,6 +45,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 |---|---|---|---|
 | Plan windows | New agents need approval once a window is this full | 80% | asks; approval lasts until that window resets |
 | | New agents are refused once a window is this full | 95% | refuses |
+| | Each session is told once to finish its step and say what is left | 95% | adds a note to the next prompt |
 | | New agents need approval when the 5-hour window rises this fast | 20 points / 10 min | asks |
 | Agents | Agents running at once, across every session on this machine | 4 | asks |
 | | Agents started or resumed per 10 minutes, across this machine | 12 | asks |
@@ -63,7 +64,9 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 **When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
 
-**What it leaves alone.** It never holds a background task's notification or another session's message, because that would lose the result. It no longer blocks prompts after a usage limit: since v2.1.234, Claude Code waits at a limit and continues at reset on its own (`autoContinueAtUsageLimit`). The guard's job is to keep you from reaching the limit, and its journal counts the lockouts it did not prevent.
+**What it leaves alone.** It never holds a background task's notification or another session's message, because that would lose the result. It no longer blocks prompts after a usage limit: since v2.1.234, Claude Code waits at a limit and continues at reset on its own (`autoContinueAtUsageLimit`). The guard's job is to keep you from reaching the limit, and its journal counts the lockouts it did not prevent. Near the limit it only adds a note: from 95%, each session's next prompt tells Claude to finish the step in progress, start nothing large, and end the turn with what is done and what is left, so a lockout finds every session at a clean stop.
+
+**Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and other non-terminal sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
 
 ## Commands
 
@@ -103,7 +106,7 @@ Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p
 /agent-guard report 30
 ```
 
-The report counts usage-limit lockouts (each locked window once), plan-window threshold crossings, and every question and refusal by rule, with what you answered. It reads every session's journal on this machine and never leaves it. Set `AGENT_GUARD_JOURNAL=0` to stop recording.
+The report counts usage-limit lockouts (each locked window once), plan-window threshold crossings, wind-down notes, and every question and refusal by rule, with what you answered. It reads every session's journal on this machine and never leaves it. Set `AGENT_GUARD_JOURNAL=0` to stop recording.
 
 ## Security and privacy
 
@@ -112,7 +115,7 @@ A mod runs inside Claude Code with your permissions; read [what a mod can reach]
 - It makes no network requests and starts no processes.
 - It decides only what the rules above describe: whether an agent starts, a prompt is sent, or a tool call runs. It asks you whenever you can answer, and gives the reason when it refuses. It reads permission modes but never changes them, and it writes no settings.
 - The only prompt it submits is your own: after "Compact, then send", it sends the prompt you typed, unchanged, once compaction finishes.
-- Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.
+- Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k or a plan window reaches 95%, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.
 - It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
 - Journal days older than 90 days are deleted (`AGENT_GUARD_JOURNAL_DAYS`).
@@ -135,7 +138,7 @@ Set these as environment variables, or under `env` in `~/.claude/settings.json`.
 | `AGENT_GUARD_AGENT_TOKENS_MAX` | Subagent tokens per window on this machine (`10000000`) |
 | `AGENT_GUARD_DEPTH_MAX` | Agent layers below the main conversation (`1`) |
 | `AGENT_GUARD_LIMIT_ASK_PERCENT` | Plan-window percentage from which new agents ask (`80`) |
-| `AGENT_GUARD_LIMIT_DENY_PERCENT` | Plan-window percentage from which new agents are refused (`95`) |
+| `AGENT_GUARD_LIMIT_DENY_PERCENT` | Plan-window percentage from which new agents are refused and each session is told to wind down (`95`) |
 | `AGENT_GUARD_BURN_PERCENT` | 5-hour-window points per window that make new agents ask (`20`) |
 | `AGENT_GUARD_CONTEXT_WARN` | Context at which Claude is told once to keep the turn bounded (`300000`) |
 | `AGENT_GUARD_CONTEXT_HARD` | Context at which a prompt asks before it is sent (`500000`) |

@@ -79,6 +79,8 @@ export type SessionState = {
   override?: { until: number; scope: Scope }
   /** The context warning was given and still applies. */
   warned: boolean
+  /** Claude was told to wind down, and a plan window is still past the refusal threshold. */
+  windDown: boolean
   /** A Stop hook reopened the current turn, so "end the turn" cannot clear a block. */
   reopened: boolean
   dormantResumes: number[]
@@ -114,6 +116,7 @@ export function newSession(id: string, canAsk: boolean): SessionState {
     denials: [],
     failures: {},
     warned: false,
+    windDown: false,
     reopened: false,
     dormantResumes: [],
   }

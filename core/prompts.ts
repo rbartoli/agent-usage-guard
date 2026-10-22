@@ -4,6 +4,7 @@
 // It never holds a prompt over plan limits either; Claude Code waits at a limit
 // and resumes on its own.
 
+import { highestLimit, limitDetail } from './agents.ts'
 import type { Config } from './config.ts'
 import { MAIN, type PeerRecord, type Scope, type SessionState, countOnMachine, overrideCovers } from './state.ts'
 import { count, duration, sentence, tokens } from './text.ts'
@@ -46,7 +47,7 @@ export function promptGate(
 ): Verdict {
   if (!config.enabled || request.source === 'other') return ALLOW
   const context = state.loops[MAIN]?.context
-  if (context === undefined || overrideCovers(state, now, 'context')) return withWarning(state, config, context)
+  if (context === undefined || overrideCovers(state, now, 'context')) return withNotes(state, peers, config, now, context)
 
   const hardLeased = state.leases['prompt-context'] !== undefined
   if (context >= config.contextHard && !hardLeased) {
@@ -72,7 +73,7 @@ export function promptGate(
     }
     state.dormantResumes.push(now)
   }
-  return withWarning(state, config, context)
+  return withNotes(state, peers, config, now, context)
 }
 
 /** The user chose to compact first: drop the prompt, compact, then send it. */
@@ -108,18 +109,37 @@ function drop(rule: Rule, reason: string): Drop {
   return { kind: 'drop', rule, message: `${SIGNATURE}: ${reason}` }
 }
 
-/** The warning for a prompt the user chose to send, if Claude has not had it yet. */
-export function contextNote(state: SessionState, config: Config): string | undefined {
-  const verdict = withWarning(state, config, state.loops[MAIN]?.context)
+/** The notes for a prompt the user chose to send, if Claude has not had them yet. */
+export function promptNotes(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): string | undefined {
+  const verdict = withNotes(state, peers, config, now, state.loops[MAIN]?.context)
   return verdict.kind === 'allow' ? verdict.note : undefined
 }
 
+function withNotes(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number, context: number | undefined): Verdict {
+  const notes = [contextWarning(state, config, context), windDown(state, peers, config, now)].filter((n) => n !== undefined)
+  return notes.length === 0 ? ALLOW : { kind: 'allow', note: notes.join('\n') }
+}
+
 /** Tells Claude once, when the context first crosses the warning threshold. */
-function withWarning(state: SessionState, config: Config, context: number | undefined): Verdict {
-  if (context === undefined || context < config.contextWarn || state.warned) return ALLOW
+function contextWarning(state: SessionState, config: Config, context: number | undefined): string | undefined {
+  if (context === undefined || context < config.contextWarn || state.warned) return undefined
   state.warned = true
-  return {
-    kind: 'allow',
-    note: `${SIGNATURE}: this session's context is ${tokens(context)} tokens. Keep this turn bounded, and recommend /compact to the user at the next natural break.`,
+  return `${SIGNATURE}: this session's context is ${tokens(context)} tokens. Keep this turn bounded, and recommend /compact to the user at the next natural break.`
+}
+
+/**
+ * Tells Claude once, when a plan window on this machine reaches the percentage
+ * at which new agents are refused, to finish the step and hand over: parallel
+ * main sessions run on after agents stop, and a lockout cuts each one off
+ * wherever it is. Told again only after the window falls back below it.
+ */
+function windDown(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): string | undefined {
+  const limit = highestLimit(state, peers, now)
+  if (!limit || limit.percent < config.limitDenyPercent) {
+    state.windDown = false
+    return undefined
   }
+  if (state.windDown) return undefined
+  state.windDown = true
+  return `${SIGNATURE}: ${limitDetail(limit)}. Finish the step in progress, start nothing large, and end this turn with a short summary of what is done and what is left, so the work can resume after the reset.`
 }

@@ -200,7 +200,7 @@ export function highestLimit(state: SessionState, peers: readonly PeerRecord[], 
   return highest
 }
 
-function limitDetail(limit: LimitReading): string {
+export function limitDetail(limit: LimitReading): string {
   const reset = limit.resetsAt === undefined ? '' : ` (resets ${shortClock(limit.resetsAt)})`
   return `the ${windowName(limit.kind)} window is ${limit.percent}% used${reset}`
 }

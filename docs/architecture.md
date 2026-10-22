@@ -13,7 +13,7 @@ core/                    harness-agnostic: no I/O, no clock, no dependencies
   observe.ts             facts after they happen: responses, limits, agents, tool results
   agents.ts              the agent gate: spawns, resumes, workflow agents
   tools.ts               the tool gate: retry fuse, heavy-context tool budget
-  prompts.ts             the prompt gate: heavy prompts, dormant resumes, warning
+  prompts.ts             the prompt gate: heavy prompts, dormant resumes, notes
   verdict.ts             verdict types and the denial ladder with the agent fuse
   lockout.ts             which failures were usage-limit lockouts
   journal.ts             journal rows, retention and the report
@@ -68,7 +68,8 @@ A verdict is one of:
   person and hands the answer to `resolveAgentAsk` (a verdict),
   `resolveHeavyAsk` (a verdict, plus whether to compact after the turn) or
   `resolvePromptAsk` (a verdict, or `compact-then-send`), and carries out what
-  comes back. A harness with nobody to
+  comes back. A prompt allowed after its question still owes Claude the notes
+  the gate held back; `promptNotes(...)` returns them. A harness with nobody to
   ask sets `state.canAsk = false`, and the core then refuses instead of asking.
 
 Two duties fall on every adapter, because only it knows the harness:

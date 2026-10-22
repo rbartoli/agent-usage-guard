@@ -11,6 +11,7 @@ export type JournalEvent =
   | 'drop' // a prompt was held
   | 'override' // /agent-guard allow or pause
   | 'limit' // a plan window crossed an ask or deny threshold
+  | 'note' // Claude was told to wind down
   | 'lockout' // a request failed on a usage limit
 
 export type JournalRow = {
@@ -23,7 +24,7 @@ export type JournalRow = {
   answer?: string
   tool?: string
   ctx?: string
-  /** Plan-window percentage, for `limit` and `lockout`. */
+  /** Plan-window percentage, for `limit`, `note` and `lockout`. */
   pct?: number
   kind?: string
   /** For `lockout`: when the window that locked resets, from a current reading of it. */
@@ -93,6 +94,8 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
     const byThreshold = countBy(crossings, (r) => `${windowName(r.kind ?? '?')} ${r.rule ?? ''}`.trim())
     lines.push(`Limit crossings: ${[...byThreshold].map(([k, n]) => `${k} ×${n}`).join(', ')}`)
   }
+  const windDowns = recent.filter((r) => r.ev === 'note' && r.rule === 'wind-down')
+  if (windDowns.length > 0) lines.push(`Wind-down notes: ${windDowns.length} in ${count(new Set(windDowns.map((r) => r.s)).size, 'session')}`)
 
   const perRule = new Map<string, RuleCount>()
   const bump = (rule: string | undefined, field: keyof RuleCount): void => {
