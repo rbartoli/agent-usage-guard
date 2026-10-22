@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-23
 
 - **From 95%, each session winds down.** Once a plan window on this machine
   reaches `AGENT_GUARD_LIMIT_DENY_PERCENT` (95%), the point at which new agents
