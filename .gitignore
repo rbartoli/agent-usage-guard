@@ -3,3 +3,5 @@
 .DS_Store
 # Scene recordings, and the GIF demo/render.sh joins them into
 demo/out/
+# Claude Code worktrees
+.claude/worktrees/

@@ -52,7 +52,7 @@ export function agentGate(
     const base = `The user declined new agents for now (${details}). Continue without starting agents; the user can lift this with /agent-guard allow.`
     return refuse(state, config, now, trips[0]!.rule, `agents:${trips[0]!.rule}`, base, true)
   }
-  if (!state.canAsk) return unattended(state, config, now, trips, details)
+  if (!state.canAsk) return unattended(state, config, now, trips, details, request.resume)
   return {
     kind: 'ask',
     family: 'agents',
@@ -74,6 +74,7 @@ export function resolveAgentAsk(
   now: number,
   ask: Ask,
   answer: string | undefined,
+  resume = false,
 ): Verdict {
   if (answer === AGENT_ALLOW) {
     for (const trip of ask.trips) state.leases[trip.leaseKey] = Math.max(state.leases[trip.leaseKey] ?? 0, trip.leaseUntil)
@@ -83,11 +84,11 @@ export function resolveAgentAsk(
   const details = join(ask.trips.map((t) => t.detail))
   const said =
     answer === undefined
-      ? 'The user dismissed the question about starting it'
+      ? `The user dismissed the question about ${resume ? 'resuming' : 'starting'} it`
       : answer === AGENT_REFUSE
-        ? 'The user chose not to start it'
+        ? `The user chose not to ${resume ? 'resume' : 'start'} it`
         : `The user answered "${answer}" instead of allowing it`
-  const base = `This agent was not started: ${details}. ${said}. Continue without starting agents unless the user says otherwise.`
+  const base = `${notRun(resume)}: ${details}. ${said}. Continue without starting agents unless the user says otherwise.`
   return refuse(state, config, now, ask.trips[0]!.rule, `agents:${ask.trips[0]!.rule}`, base, true)
 }
 
@@ -168,7 +169,7 @@ function agentTrips(
   return trips
 }
 
-function unattended(state: SessionState, config: Config, now: number, trips: Trip[], details: string): Deny {
+function unattended(state: SessionState, config: Config, now: number, trips: Trip[], details: string, resume: boolean): Deny {
   const first = trips[0]!
   const advice: Record<string, string> = {
     concurrency: 'Wait for a running agent to finish before starting another',
@@ -177,7 +178,7 @@ function unattended(state: SessionState, config: Config, now: number, trips: Tri
     burn: 'Continue without agents until the burn slows',
     limit: 'Continue without agents',
   }
-  const base = `This agent was not started: ${details}. Nobody can approve it in this session. ${advice[first.rule] ?? 'Continue without agents'}.`
+  const base = `${notRun(resume)}: ${details}. Nobody can approve it in this session. ${advice[first.rule] ?? 'Continue without agents'}.`
   return refuse(state, config, now, first.rule, `agents:${first.rule}`, base, true)
 }
 
@@ -225,4 +226,8 @@ function burn(
   if (sameWindow.length === 0) return undefined
   const lowest = Math.min(...sameWindow.map((r) => r.percent))
   return { points: Math.round((current.percent - lowest) * 10) / 10, percent: current.percent }
+}
+
+function notRun(resume: boolean): string {
+  return resume ? 'This agent was not resumed' : 'This agent was not started'
 }

@@ -378,6 +378,41 @@ describe('resumed agents', () => {
     expect(String(third.deny)).toMatch(/2 agents started on this machine in the last 10 min \(limit 2\)/)
   })
 
+  // Since Claude Code 2.1.299 the resume also raises agent.spawn, inside the SendMessage call.
+  const wake = ($: Engine, agentId: string, extra: Record<string, unknown> = {}) =>
+    $.agent.spawn({ prompt: 'carry on', description: 'resume', subagentType: 'general-purpose', resume: { agentId }, ...extra } as never) as Promise<Record<string, unknown>>
+  const ended = (agentId: string) => ({ turnId: 'x', answer: '', durationMs: 1, isAborted: false, reason: 'answer', agentId }) as never
+
+  test('a resume that also raises agent.spawn is judged and counted once', async ($, on) => {
+    let inner: Record<string, unknown> | undefined
+    const w = world(on, {
+      answers: ['Allow'],
+      env: { AGENT_GUARD_ROLLING_MAX: '2' },
+      toolResult: async (e) => {
+        if (e.tool === 'SendMessage') inner = await wake($, 'agent-1')
+        return { result: 'ok' }
+      },
+    })
+    await start($, w, true)
+    await spawn($, w)
+    await $.turn.complete(ended('agent-1'))
+    expect(await send($, 'agent-1')).toEqual({ result: 'ok' })
+    expect(inner).toMatchObject({ agentId: 'agent-1' })
+    expect(w.questions).toEqual([])
+    const status = await $.command.run({ command: 'agent-guard', args: 'status' } as never)
+    expect(status.text).toMatch(/2 started in the last 10 min \(limit 2\)/)
+  })
+
+  test('a resume with no SendMessage, such as a teammate woken from disk, is gated as a resume', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_ROLLING_MAX: '1' } })
+    await start($, w, false)
+    await spawn($, w)
+    await $.turn.complete(ended('agent-1'))
+    const refused = await wake($, 'agent-1', { isTeammate: true })
+    expect(String(refused.deny)).toMatch(/^This agent was not resumed: /)
+    expect(String(refused.deny)).toMatch(/1 agent started on this machine in the last 10 min \(limit 1\)/)
+  })
+
   test('a message to a running agent or an unknown name is not a start', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_ROLLING_MAX: '1' } })
     await start($, w, false)

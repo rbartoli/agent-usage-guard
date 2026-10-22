@@ -120,8 +120,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('turn.complete', () => ({ text: '' }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
-  on('agent.spawn', async () => {
-    const agentId = `agent-${w.ran.filter((r) => r === 'spawn').length}`
+  on('agent.spawn', async ($, e) => {
+    const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
     return { model: 'claude-test', agentId } as never
   })
