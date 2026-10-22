@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A resumed subagent counts as one start.** Since Claude Code 2.1.299, a
+  `SendMessage` resume also raises `agent.spawn`, inside the same call. The
+  guard judged it in both, so one resume counted as two starts and could ask
+  a second time, as if a new agent were starting. The spawn event now passes a
+  resume its `SendMessage` call already judged. A resume that arrives only
+  through `agent.spawn`, such as a teammate brought back from disk, is judged
+  there as a resume, and every refusal of one says it was not resumed rather
+  than not started.
 - **`/agent-guard status` names the version that runs.** Its first line reads
   `On (1.1.0).`, from the loaded copy's own `plugin.json`, so after
   `claude plugin update` and `/reload-plugins` it shows which copy a session

@@ -93,6 +93,8 @@ let interactive = false
 let askUnavailable = false
 let permissionMode: string | undefined
 let peers: PeerRecord[] = []
+/** Agents a SendMessage call already judged as resumes, while that call runs. */
+const gatedResumes = new Set<string>()
 let lastPublished = 0
 /** The last-active time this process last stored, so a heartbeat does not rewrite it. */
 let lastActiveKept: number | undefined
@@ -335,8 +337,12 @@ export function register(on: On): void {
     trackMode(e.permissionMode, e.parentAgentId)
     const now = await $.clock.now()
     const loop = e.parentAgentId ?? MAIN
+    // Since 2.1.299 a resume raises agent.spawn too, inside the SendMessage call that judged and counted it.
+    const resumed = e.resume?.agentId
+    if (resumed !== undefined && gatedResumes.has(resumed)) return next(e)
+    const known = resumed === undefined ? undefined : session.agents[resumed]
     const parentDepth = e.parentAgentId ? (session.agents[e.parentAgentId]?.depth ?? 1) : 0
-    const request = { loop, depth: parentDepth + 1, resume: false }
+    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined }
     const { verdict, reservedAt } = await agentVerdict($, now, request)
     if (verdict.kind === 'deny') {
       await journalDenial($, verdict, 'Agent')
@@ -348,7 +354,8 @@ export function register(on: On): void {
       if (!result.deny && result.agentId) {
         started = result.agentId
         const kind = e.isTeammate ? 'teammate' : e.workflow ? 'workflow' : e.fork ? 'fork' : 'subagent'
-        observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
+        if (known) observeAgentActive(session, started)
+        else observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
       }
       return result
     } finally {
@@ -378,6 +385,7 @@ export function register(on: On): void {
           return { deny: verdict.message }
         }
         resumed = { id: target, reservedAt }
+        gatedResumes.add(target)
       }
     }
 
@@ -401,6 +409,7 @@ export function register(on: On): void {
     } finally {
       observeToolResult(session, await $.clock.now(), loop, print, Boolean(result?.isError) && !result?.deny)
       if (resumed) {
+        gatedResumes.delete(resumed.id)
         const delivered = result !== undefined && !result.deny && !result.isError
         if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined)
         if (delivered) observeAgentActive(session, resumed.id)
@@ -692,7 +701,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
     const asked = await askUser($, verdict)
     const resolved = asked.unavailable
       ? agentGate(session, peers, config, asked.at, request)
-      : resolveAgentAsk(session, config, asked.at, verdict, asked.answer)
+      : resolveAgentAsk(session, config, asked.at, verdict, asked.answer, request.resume)
     const reservedAt = resolved.kind === 'allow' ? reserveStart(session, asked.at) : undefined
     await journalAnswer($, verdict, asked, resolved.kind === 'allow' ? 'allow' : 'refuse')
     await refreshStatus($)

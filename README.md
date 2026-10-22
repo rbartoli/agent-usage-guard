@@ -88,7 +88,8 @@ Checked against Claude Code v2.1.295:
 | Path | Coverage |
 |---|---|
 | Subagents, teammates and workflow agents | Held before they start (`agent.spawn`) |
-| A finished subagent sent new work with `SendMessage` | Held before it resumes, and counted as a start |
+| A finished subagent sent new work with `SendMessage` | Held before it resumes, and counted as a start, once |
+| A teammate brought back from disk (Claude Code 2.1.299 or later) | Held before it resumes, and counted as a start |
 | `/subtask` forks, and anything else that starts without `agent.spawn` | Counted when they start, never held: Claude Code offers no event before they do. Forks Claude starts through the Agent tool are held like any agent |
 | Claude Code's internal agents (prompt suggestions, compaction) | Not counted |
 | Plan-window percentages | From the last API response on a subscription, in `claude -p` too. API-key sessions report none, so only the token and count budgets apply |
