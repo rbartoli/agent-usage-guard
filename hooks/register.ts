@@ -426,7 +426,7 @@ export function register(on: On): void {
       return { text }
     }
     await loadPeers($, now)
-    return { text: statusReport(session, peers, config, now, problems) }
+    return { text: statusReport(session, peers, config, now, problems, await pluginVersion($)) }
   }).catch(($, e, next) => ({ text: `The command failed: ${next.error?.message ?? 'unknown error'}` }))
 }
 
@@ -755,6 +755,17 @@ async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): P
     await $.store.set(key, journalCache.rows)
   } catch (error) {
     $.ui.log(`agent-usage-guard could not write its journal: ${String(error)}`, { to: 'debug' })
+  }
+}
+
+/** The version in the loaded copy's own manifest, so the status shows which copy runs. */
+async function pluginVersion($: Api): Promise<string | undefined> {
+  try {
+    const manifest: unknown = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))
+    const version = (manifest as { version?: unknown } | null)?.version
+    return typeof version === 'string' ? version : undefined
+  } catch {
+    return undefined
   }
 }
 

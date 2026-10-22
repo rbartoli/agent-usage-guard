@@ -58,10 +58,12 @@ export function statusReport(
   config: Config,
   now: number,
   problems: readonly string[],
+  version?: string,
 ): string {
-  if (!config.enabled) return 'Off: AGENT_GUARD is set to turn it off.'
+  const running = version ? ` (${version})` : ''
+  if (!config.enabled) return `Off${running}: AGENT_GUARD is set to turn it off.`
   const window = config.windowMs
-  const lines = ['On.']
+  const lines = [`On${running}.`]
 
   const peerRunning = peers.reduce((sum, p) => sum + p.running, 0)
   const starts = countOnMachine(state, peers, 'starts', now, window)
