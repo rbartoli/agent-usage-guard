@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Only you can lift the guard's limits.** `/agent-guard allow` and `pause`
+  now check where the command came from. When another plugin runs them
+  through `$.command.run`, the guard refuses, changes nothing, and says so in
+  the transcript. Before, any installed plugin could lift every limit for up
+  to eight hours, and the journal recorded it as your own override. Commands you
+  type, or send through Remote Control or the Agent SDK, work as before, as
+  do `status`, `report` and `resume` from anywhere. Found in a security review on
+  2026-10-24.
+- **A question with no answer is never a yes.** The guard told a dismissed
+  question from a failed one by the wording of Claude Code's error, and a
+  failure let the agent start. Had a Claude Code release reworded the
+  dismissal, every "no" would have started the agent. Any question that ends
+  without an answer now counts as dismissed. An agent the guard fails to
+  judge for any reason is now refused, so Claude starts it again; before,
+  only an overrun was. Tool calls and prompts still go ahead when the guard
+  fails.
+
 ## 1.1.1 — 2026-10-23
 
 - **A resumed subagent counts as one start.** Since Claude Code 2.1.299, a

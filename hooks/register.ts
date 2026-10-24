@@ -363,11 +363,11 @@ export function register(on: On): void {
       await publish($, await $.clock.now())
     }
   }).catch(($, e, next) =>
-    // An overrun before the agent started leaves it unjudged; starting it anyway
-    // would let a stuck guard wave through every agent of a parallel batch.
-    next.error?.kind === 'timeout' && !next.called
-      ? { deny: `agent-usage-guard could not judge this agent in time. Start it again. [${SIGNATURE}]` }
-      : failOpen($, 'agent.spawn', next.error, () => next(e)),
+    // A failure before the agent started leaves it unjudged; starting it anyway
+    // would let a broken guard wave through every agent of a parallel batch.
+    next.called
+      ? failOpen($, 'agent.spawn', next.error, () => next(e))
+      : { deny: `agent-usage-guard could not judge this agent${next.error?.kind === 'timeout' ? ' in time' : ''}. Start it again. [${SIGNATURE}]` },
   )
 
   on('tool.call', async ($, e, next) => {
@@ -424,6 +424,12 @@ export function register(on: On): void {
     if (command.action === 'help') return { text: helpText(command.error) }
     if (command.action === 'report') return { text: await report($, now, command.days) }
     if (command.action === 'allow') {
+      // Only the person lifts limits: another plugin's $.command.run reaches this hook too.
+      if (sourceOf(e.origin.kind) === 'other') {
+        const from = e.origin.kind === 'plugin' ? `the ${e.origin.name} plugin` : `a ${e.origin.kind} prompt`
+        $.ui.log(`agent-usage-guard refused /${COMMAND} ${e.args.trim()} from ${from}.`)
+        return { text: `Only you can lift the guard's limits, and this came from ${from}, so nothing changed. Type /${COMMAND} ${e.args.trim()} to lift them.` }
+      }
       const text = applyOverride(session, now, command.scope, command.minutes)
       await journal($, now, { ev: 'override', rule: command.scope })
       await refreshStatus($)
@@ -626,13 +632,13 @@ type Asked = { answer: string | undefined; unavailable: boolean; at: number }
 
 /**
  * Journals a question and asks it in Claude Code's own question dialog.
- * `answer` is undefined when the dialog came back without one: the user
- * dismissed it. `unavailable` means the question could not be asked at all,
- * because the session has no AskUserQuestion tool: from then on the session
- * counts as one nobody can answer, and the gate decides alone. Any other
- * failure, such as the turn being interrupted while the dialog was open, is
- * not the user's answer: it is rethrown, and the hook fails open. `at` is when
- * the question ended.
+ * `answer` is undefined when the dialog came back without one. That counts as
+ * a dismissal, whatever ended it: the user dismissed it, or interrupted the
+ * turn, or the dialog failed. A question with no answer is never a yes.
+ * `unavailable` means the question could not be asked at all, because the
+ * session has no AskUserQuestion tool: from then on the session counts as one
+ * nobody can answer, and the gate decides alone. `at` is when the question
+ * ended.
  */
 async function askUser($: Api, ask: Ask, ctx?: string): Promise<Asked> {
   await journal($, await $.clock.now(), { ev: 'ask', rule: ask.trips[0]?.rule, ctx })
@@ -647,7 +653,7 @@ async function askUser($: Api, ask: Ask, ctx?: string): Promise<Asked> {
       session.canAsk = false
       unavailable = true
     } else if (!/\$\.ui\.ask: no answer\b/.test(text)) {
-      throw error
+      $.ui.log(`agent-usage-guard: the question ended without an answer (${text}), so it counts as dismissed.`, { to: 'debug' })
     }
   }
   return { answer, unavailable, at: await $.clock.now() }

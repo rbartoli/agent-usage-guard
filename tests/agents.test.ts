@@ -3,6 +3,8 @@ import { type Engine, describe, expect, test } from 'claude-code/testing'
 import { SESSION_ID, T0, journalRows, respond, spawn, start, world } from './harness.ts'
 
 const MINUTE = 60_000
+/** A command the user typed at the prompt. */
+const TYPED = { kind: 'composer' }
 
 describe('agent gate', () => {
   test('a headless session refuses the agent past the concurrency limit and tells the model to wait', async ($, on) => {
@@ -93,14 +95,26 @@ describe('agent gate', () => {
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ answer: 'unavailable' })])
   })
 
-  test('a question that fails to open lets the agent start instead of counting as a no', async ($, on) => {
+  test('a question that ends without an answer in any other way counts as a dismissal, never as a yes', async ($, on) => {
     const w = world(on, { askFails: true })
     await start($, w, true)
     for (let i = 0; i < 4; i++) await spawn($, w)
-    expect((await spawn($, w)).agentId).toBeDefined()
-    expect((await spawn($, w)).agentId).toBeDefined()
-    expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([])
-    expect(w.logs).toContainEqual(expect.stringMatching(/the agent\.spawn hook failed, so the event went ahead/))
+    const fifth = await spawn($, w)
+    expect(fifth.agentId).toBeUndefined()
+    expect(String(fifth.deny)).toMatch(/The user dismissed the question about starting it/)
+    expect(String((await spawn($, w)).deny)).toMatch(/The user declined new agents for now/)
+    expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ answer: 'dismiss' })])
+    expect(w.logs).toContainEqual(expect.stringMatching(/the question ended without an answer \(.+\), so it counts as dismissed/))
+  })
+
+  test('an agent the guard failed to judge is refused, so Claude starts it again', async ($, on) => {
+    // Another session's record with a window kind that is not a string makes the gate throw.
+    const peer = { v: 2, at: T0, running: 0, starts: [], agentTokens: [], dormantResumes: [], limit: { at: T0, kind: 5, percent: 99 } }
+    const w = world(on, { store: { 'peer:other-session': peer } })
+    await start($, w, true)
+    const refused = await spawn($, w)
+    expect(refused.agentId).toBeUndefined()
+    expect(String(refused.deny)).toMatch(/^agent-usage-guard could not judge this agent\. Start it again\./)
   })
 
   test('agents started while a question is open are held back at once, without waiting on it', async ($, on) => {
@@ -285,7 +299,7 @@ describe('agent fuse and overrides', () => {
     const first = await spawn($, w)
     for (let i = 0; i < 5; i++) await spawn($, w, String(first.agentId))
     expect(String((await spawn($, w)).deny)).toMatch(/paused until/)
-    await $.command.run({ command: 'agent-guard', args: 'resume' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'resume', origin: TYPED } as never)
     expect((await spawn($, w)).agentId).toBeDefined()
   })
 
@@ -293,18 +307,33 @@ describe('agent fuse and overrides', () => {
     const w = world(on)
     await start($, w, false)
     for (let i = 0; i < 4; i++) await spawn($, w)
-    const lifted = await $.command.run({ command: 'agent-guard', args: 'allow agents 15' } as never)
+    const lifted = await $.command.run({ command: 'agent-guard', args: 'allow agents 15', origin: TYPED } as never)
     expect(lifted.text).toMatch(/^Agent limits lifted for 15 min, until \d\d:\d\d\./)
     expect((await spawn($, w)).agentId).toBeDefined()
-    expect((await $.command.run({ command: 'agent-guard', args: 'resume' } as never)).text).toBe('Limits apply again.')
+    expect((await $.command.run({ command: 'agent-guard', args: 'resume', origin: TYPED } as never)).text).toBe('Limits apply again.')
     expect(String((await spawn($, w)).deny)).toMatch(/agents are running on this machine/)
     expect(journalRows(w).some((r) => r.ev === 'override' && r.rule === 'agents')).toBe(true)
+  })
+
+  test('another plugin cannot lift the limits; it can still read the status', async ($, on) => {
+    const w = world(on)
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    const plugin = { kind: 'plugin', name: 'other-mod' }
+    for (const args of ['allow agents 15', 'pause 480']) {
+      const refused = await $.command.run({ command: 'agent-guard', args, origin: plugin } as never)
+      expect(refused.text).toBe(`Only you can lift the guard's limits, and this came from the other-mod plugin, so nothing changed. Type /agent-guard ${args} to lift them.`)
+    }
+    expect(String((await spawn($, w)).deny)).toMatch(/agents are running on this machine/)
+    expect(journalRows(w).some((r) => r.ev === 'override')).toBe(false)
+    expect(w.logs).toContainEqual(expect.stringMatching(/refused \/agent-guard pause 480 from the other-mod plugin/))
+    expect((await $.command.run({ command: 'agent-guard', args: 'status', origin: plugin } as never)).text).toMatch(/^On/)
   })
 
   test('the status line clears when an allow runs out, even in a quiet session', async ($, on) => {
     const w = world(on)
     await start($, w, true)
-    await $.command.run({ command: 'agent-guard', args: 'allow 5' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow 5', origin: TYPED } as never)
     await w.clock.advance(5 * MINUTE)
     expect(w.statuses).toEqual([expect.stringMatching(/^all limits lifted until \d\d:\d\d$/), undefined])
   })
