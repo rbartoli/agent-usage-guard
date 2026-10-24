@@ -18,6 +18,11 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **Checked against Claude Code 2.1.310.** CI now tests on 2.1.310, and the
+  README's coverage table says so; no change from 2.1.296 to 2.1.310 alters
+  a row. The README describes Claude Code's own resume warning (2.1.304),
+  which shows before a cold resume only from a minimum share of the 5-hour
+  limit, so the guard's dormant question, from 150k tokens, stays.
 
 ## 1.1.1 — 2026-10-23
 
