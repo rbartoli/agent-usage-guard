@@ -115,6 +115,25 @@ describe('heavy prompt', () => {
     )
   })
 
+  test('a scheduled, channel or Slack prompt at 520k is held with a reason, even in a session someone could be asked in', async ($, on) => {
+    const w = world(on, { contextTokens: 520_000 })
+    await start($, w, true)
+    for (const origin of [{ kind: 'scheduled-trigger' }, { kind: 'channel', server: 'slack' }, { kind: 'slack-ping' }]) {
+      const result = (await $.prompt.submit({ text: 'check the build', origin, wait: false } as never)) as Record<string, unknown>
+      expect(String(result.drop)).toMatch(/^agent-usage-guard: this session holds 520k context tokens/)
+    }
+    expect(w.questions).toEqual([])
+  })
+
+  test('a marker from a channel or a schedule is an ordinary prompt, never an override', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    for (const origin of [{ kind: 'channel', server: 'slack' }, { kind: 'scheduled-trigger' }]) {
+      expect(await $.prompt.submit({ text: '[allow-usage-guard]', origin, wait: false } as never)).toEqual({ text: '[allow-usage-guard]' })
+    }
+    expect(journalRows(w).some((r) => r.ev === 'override')).toBe(false)
+  })
+
   test('a background task\'s notification is never held', async ($, on) => {
     const w = world(on, { contextTokens: 520_000 })
     await start($, w, true)

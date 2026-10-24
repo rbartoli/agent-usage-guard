@@ -82,6 +82,8 @@ const STALE_PEER_MS = 86_400_000
 const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 /** A redraw waits at most a day, then times the rest: a JavaScript timer cannot wait past 24.8 days, and a window may reset later. */
 const REDRAW_MAX_MS = 86_400_000
+/** Prompts that start a turn on their own: a schedule or /loop firing, a relayed channel message, a Slack ping. */
+const UNATTENDED: ReadonlySet<string> = new Set(['scheduled-trigger', 'channel', 'slack-ping'])
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
 
@@ -258,7 +260,7 @@ export function register(on: On): void {
     const now = await $.clock.now()
     const source = sourceOf(e.origin.kind)
 
-    const scope = source === 'other' ? undefined : markerScope(e.text)
+    const scope = fromPerson(e.origin.kind) ? markerScope(e.text) : undefined
     if (scope) {
       const text = applyOverride(session, now, scope, DEFAULT_ALLOW_MINUTES)
       await journal($, now, { ev: 'override', rule: scope })
@@ -425,7 +427,7 @@ export function register(on: On): void {
     if (command.action === 'report') return { text: await report($, now, command.days) }
     if (command.action === 'allow') {
       // Only the person lifts limits: another plugin's $.command.run reaches this hook too.
-      if (sourceOf(e.origin.kind) === 'other') {
+      if (!fromPerson(e.origin.kind)) {
         const from = e.origin.kind === 'plugin' ? `the ${e.origin.name} plugin` : `a ${e.origin.kind} prompt`
         $.ui.log(`agent-usage-guard refused /${COMMAND} ${e.args.trim()} from ${from}.`)
         return { text: `Only you can lift the guard's limits, and this came from ${from}, so nothing changed. Type /${COMMAND} ${e.args.trim()} to lift them.` }
@@ -530,10 +532,20 @@ function trackMode(mode: string | undefined, agentId: string | undefined): void 
   session.canAsk = canAsk()
 }
 
+/**
+ * Who a prompt is from, for the prompt gate. Scheduled prompts, channel
+ * messages and Slack pings start a turn with nobody at the keyboard to answer,
+ * so the gate holds a heavy one with the reason, as in `claude -p`.
+ */
 function sourceOf(kind: string): PromptSource {
   if (kind === 'composer' || kind === 'bridge') return 'user'
-  if (kind === 'sdk') return 'headless'
+  if (kind === 'sdk' || UNATTENDED.has(kind)) return 'headless'
   return 'other'
+}
+
+/** A person sent it from the prompt, Remote Control or the SDK: only they lift limits. */
+function fromPerson(kind: string): boolean {
+  return kind === 'composer' || kind === 'bridge' || kind === 'sdk'
 }
 
 /** Publishes this session's counts for the other sessions on this machine. */

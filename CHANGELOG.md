@@ -18,6 +18,15 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **Scheduled and relayed prompts go through the prompt gate.** A schedule
+  or `/loop` firing, a message relayed from a channel such as Slack, and a
+  Slack ping started a turn the gate never looked at, so a `/loop` on a
+  520k-token session re-read it all every time, unasked. They are now held
+  as in `claude -p`: a heavy one is held with the reason, and a dormant heavy
+  one counts against the machine-wide cap. They never lift limits: a bracket
+  marker from them is an ordinary prompt, and `/agent-guard allow` from them
+  is refused. Background-task notifications and other sessions' messages
+  still pass untouched.
 
 ## 1.1.1 — 2026-10-23
 
