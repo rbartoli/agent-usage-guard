@@ -99,6 +99,8 @@ let lastPublished = 0
 /** The last-active time this process last stored, so a heartbeat does not rewrite it. */
 let lastActiveKept: number | undefined
 let lastStatus: string | undefined
+/** Why the last write to the store failed, while no write has worked since. */
+let storeFailure: string | undefined
 /** The pending redraw of the status line, and the time it is for. */
 let redraw: { at: number; timer: Timer } | undefined
 let compactAfterTurn = false
@@ -441,7 +443,7 @@ export function register(on: On): void {
       return { text }
     }
     await loadPeers($, now)
-    return { text: statusReport(session, peers, config, now, problems, await pluginVersion($)) }
+    return { text: statusReport(session, peers, config, now, problems, await pluginVersion($), storeFailure) }
   }).catch(($, e, next) => ({ text: `The command failed: ${next.error?.message ?? 'unknown error'}` }))
 }
 
@@ -543,7 +545,7 @@ async function publish($: Api, now: number): Promise<void> {
   expireAgents(session, now, config.peerTtlMs)
   prune(session, now, config.windowMs)
   try {
-    await $.store.set(PEER_PREFIX + session.id, peerRecord(session, now, config.windowMs))
+    await save($, PEER_PREFIX + session.id, peerRecord(session, now, config.windowMs))
   } catch (error) {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
@@ -560,10 +562,27 @@ async function keepLastActive($: Api): Promise<void> {
   const last = session.loops[MAIN]?.activeAt
   if (!session.id || last === undefined || last === lastActiveKept) return
   try {
-    await $.store.set(LAST_ACTIVE_PREFIX + session.id, last)
+    await save($, LAST_ACTIVE_PREFIX + session.id, last)
     lastActiveKept = last
   } catch (error) {
     $.ui.log(`agent-usage-guard could not store when the session was last active: ${String(error)}`, { to: 'debug' })
+  }
+}
+
+/**
+ * Writes to the store and keeps track of whether writes work: when they stop,
+ * other sessions no longer see this one's counts, and the status says so.
+ */
+async function save($: Api, key: string, value: unknown): Promise<void> {
+  const before = storeFailure
+  try {
+    await $.store.set(key, value)
+    storeFailure = undefined
+  } catch (error) {
+    storeFailure = error instanceof Error ? error.message : String(error)
+    throw error
+  } finally {
+    if ((before === undefined) !== (storeFailure === undefined)) await refreshStatus($)
   }
 }
 
@@ -606,7 +625,8 @@ async function refreshStatus($: Api): Promise<void> {
   try {
     const now = await $.clock.now()
     redrawAt($, statusLineExpiry(session, peers, config, now), now)
-    const text = statusLine(session, peers, config, now)
+    const parts = [statusLine(session, peers, config, now), storeFailure === undefined || !config.enabled ? undefined : "store not saving: other sessions can't count this one"]
+    const text = parts.filter((p) => p !== undefined).join(' · ') || undefined
     if (text === lastStatus) return
     lastStatus = text
     $.ui.status(text)
@@ -767,7 +787,7 @@ async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): P
     const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined)) as Omit<JournalRow, 't' | 's'>
     journalCache.rows.push({ t: now, s: session.id.slice(0, 8), ...clean })
     if (journalCache.rows.length > MAX_ROWS_PER_DAY) journalCache.rows.splice(0, journalCache.rows.length - MAX_ROWS_PER_DAY)
-    await $.store.set(key, journalCache.rows)
+    await save($, key, journalCache.rows)
   } catch (error) {
     $.ui.log(`agent-usage-guard could not write its journal: ${String(error)}`, { to: 'debug' })
   }

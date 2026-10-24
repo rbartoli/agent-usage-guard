@@ -204,6 +204,18 @@ describe('agent gate', () => {
     await spawn($, w)
     expect(w.questions[0]).toMatch(/subagents processed 1\.2M tokens in the last 10 min \(limit 1M\)/i)
   })
+  test('a store that stops saving shows in the status line and the status, until a save works again', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    w.storeFull = true
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBe("store not saving: other sessions can't count this one")
+    const status = await $.command.run({ command: 'agent-guard', args: 'status', origin: TYPED } as never)
+    expect(status.text).toMatch(/^Store: the guard could not save its counts \(.+\), so other sessions on this machine don't count this session's agents\./m)
+    w.storeFull = false
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBeUndefined()
+  })
 })
 
 describe('plan-window gate', () => {

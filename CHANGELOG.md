@@ -18,6 +18,11 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **The guard says when its store stops saving.** The mod store holds 4 MiB
+  in all, and a write that failed was logged only to the debug log. Other
+  sessions then stopped counting this session's agents, with no sign. Now the
+  status line reads "store not saving: other sessions can't count this one",
+  and `/agent-guard status` gives the error, until a write works again.
 
 ## 1.1.1 — 2026-10-23
 
