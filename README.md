@@ -38,7 +38,7 @@ Run these commands inside Claude Code v2.1.287 or later:
 /reload-plugins
 ```
 
-Then run `/agent-guard` to see what it sees. Mods are on by default; the [overview](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off) lists the settings that turn them off.
+Then run `/agent-guard` to see what it sees, and `/agent-guard simulate concurrency` to see the question it asks when too many agents run, with nothing held or spent. Mods are on by default; the [overview](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off) lists the settings that turn them off.
 
 ## Why this exists
 
@@ -85,6 +85,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 /agent-guard pause [minutes]                   the same as allow, for every limit
 /agent-guard resume                            end an allow early, lift the agent pause, and let declined questions ask again
 /agent-guard report [days]                     what it did on this machine (default: 7 days)
+/agent-guard simulate <rule>                   show what a rule does, with nothing held or spent
 /agent-guard help                              these commands
 ```
 

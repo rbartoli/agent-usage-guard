@@ -17,6 +17,8 @@ import {
   parseConfig,
   peerRecord,
   prune,
+  SIMULATED,
+  simulate,
   splitJournalKeys,
 } from '../core/index.ts'
 
@@ -57,6 +59,7 @@ describe('commands', () => {
     expect(parseCommand('pause 20')).toEqual({ action: 'allow', scope: 'all', minutes: 20 })
     expect(parseCommand('report 30')).toEqual({ action: 'report', days: 30 })
     expect(parseCommand('resume')).toEqual({ action: 'resume' })
+    expect(parseCommand('simulate Concurrency')).toEqual({ action: 'simulate', rule: 'concurrency' })
   })
 
   test('rejects what it cannot read instead of guessing', () => {
@@ -65,6 +68,20 @@ describe('commands', () => {
     expect(parseCommand('allow 9999')).toMatchObject({ action: 'help' })
     expect(parseCommand('report -1')).toMatchObject({ action: 'help' })
     expect(parseCommand('frobnicate')).toEqual({ action: 'help', error: 'unknown subcommand "frobnicate"' })
+    expect(parseCommand('simulate')).toMatchObject({ action: 'help', error: expect.stringMatching(/^name a rule to simulate: concurrency, starts, /) })
+    expect(parseCommand('simulate everything')).toMatchObject({ action: 'help', error: expect.stringMatching(/^"everything" is not a rule/) })
+  })
+})
+
+describe('simulate', () => {
+  test('every rule trips with the default settings, asking where someone can answer and refusing or holding where nobody can', () => {
+    for (const rule of SIMULATED) {
+      for (const canAsk of [true, false]) {
+        const verdict = simulate(rule, defaultConfig(), NOW, canAsk)
+        expect([rule, verdict.kind]).not.toEqual([rule, 'allow'])
+        if (!canAsk) expect([rule, verdict.kind]).not.toEqual([rule, 'ask'])
+      }
+    }
   })
 })
 

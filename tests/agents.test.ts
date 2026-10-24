@@ -206,6 +206,29 @@ describe('agent gate', () => {
   })
 })
 
+describe('simulate', () => {
+  test('a simulated question opens the real dialog, and nothing changes whatever the answer', async ($, on) => {
+    const w = world(on, { answers: ["Don't start it"] })
+    await start($, w, true)
+    const result = await $.command.run({ command: 'agent-guard', args: 'simulate concurrency', origin: TYPED } as never)
+    expect(w.questions[0]).toMatch(/^Simulation, nothing changes: 4 agents are running on this machine \(limit 4\)/)
+    expect(result.text).toBe('Simulation of concurrency: you answered "Don\'t start it". Nothing was held, nothing changed and no usage was spent.')
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(journalRows(w)).toEqual([])
+  })
+
+  test('where nobody can answer, it prints the refusal Claude would read or the reason a prompt would be held', async ($, on) => {
+    const w = world(on)
+    await start($, w, false)
+    const retry = await $.command.run({ command: 'agent-guard', args: 'simulate retry', origin: TYPED } as never)
+    expect(retry.text).toMatch(/^Simulation of retry: nothing was held, and none of this applies to the current work\. Claude would read this refusal:\n\nThis exact Bash call failed 3 times in a row/)
+    const prompt = await $.command.run({ command: 'agent-guard', args: 'simulate prompt-context', origin: TYPED } as never)
+    expect(prompt.text).toMatch(/A prompt you send would be held:\n\nagent-usage-guard: this session holds 520k context tokens/)
+    expect(w.questions).toEqual([])
+    expect(journalRows(w)).toEqual([])
+  })
+})
+
 describe('plan-window gate', () => {
   const measure = (percent: number, resetsAt = '2027-01-15T15:00:00.000Z', kind = 'five_hour') => ({
     context: { window: 1_000_000 },
