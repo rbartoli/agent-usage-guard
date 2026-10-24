@@ -18,6 +18,15 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **Records read back from the store are checked value by value.** Another
+  session's record was checked only for its shape, so a corrupt or edited
+  store file could switch off the machine-wide agent cap with a negative
+  count, or put any text into the note and refusals Claude reads through a
+  plan window's name. Counts must now be whole, finite and not negative, or
+  the record doesn't count; a plan reading must have a plain window name and
+  a percentage from 0 to 1,000, or it is left out and the record's counts
+  still count. Journal rows read back for `/agent-guard report`, which Claude
+  also reads, must hold only the values the guard writes.
 
 ## 1.1.1 — 2026-10-23
 
