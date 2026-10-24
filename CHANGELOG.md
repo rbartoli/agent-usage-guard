@@ -18,6 +18,13 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **Haiku agents stay out of the running and starts limits.** A burst of
+  Haiku agents, such as Explore searches, asked like any fan-out, though
+  Haiku draws far less on a plan's usage than larger models. An agent Claude starts on Haiku
+  now passes the running and starts limits and doesn't count against them;
+  one whose own definition picks Haiku stops counting once it starts. Haiku
+  agents still count toward the subagent token budget and every plan-window
+  rule. `AGENT_GUARD_HAIKU_EXEMPT=0` counts them like any other.
 
 ## 1.1.1 — 2026-10-23
 

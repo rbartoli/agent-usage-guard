@@ -67,7 +67,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | Loops | The same tool call failing again and again, with no other call in between | 3 identical failures | refuses the identical retry |
 | | Refused agent calls within 10 minutes | 5 | pauses agent spawns for 10 min |
 
-Agents covers subagents, agent-team teammates, workflow agents, and finished subagents resumed with `SendMessage`. Each tool call is judged on the context of the loop that makes it, so a small subagent never inherits the main conversation's size.
+Agents covers subagents, agent-team teammates, workflow agents, and finished subagents resumed with `SendMessage`. Haiku agents stay out of the running and starts limits, whether Claude asks for Haiku or the agent's own definition picks it; they still count toward the subagent token budget and every plan-window rule. Each tool call is judged on the context of the loop that makes it, so a small subagent never inherits the main conversation's size.
 
 **When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel while it is open are held back, and Claude starts them again once you answer. If you allow it, that condition stays allowed for a while: a plan window until it resets, a heavy context until it shrinks (for tool calls, an hour at most), the agent counts for 10 minutes. If you decline or dismiss the question, or it closes without an answer for any other reason, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
 
@@ -141,6 +141,7 @@ Set these as environment variables, or under `env` in `~/.claude/settings.json`.
 |---|---|
 | `AGENT_GUARD` | `0`, `false`, `off` or `no` turns the guard off (`1`) |
 | `AGENT_GUARD_JOURNAL` | `0` stops the journal (`1`) |
+| `AGENT_GUARD_HAIKU_EXEMPT` | `0` counts Haiku agents in the running and starts limits like any other (`1`: they stay out) |
 | `AGENT_GUARD_JOURNAL_DAYS` | Days of journal kept (`90`) |
 | `AGENT_GUARD_WINDOW_SECONDS` | Rolling window for budgets, burn and refusals (`600`) |
 | `AGENT_GUARD_AGENT_MAX` | Agents running at once on this machine (`4`) |
