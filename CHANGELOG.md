@@ -18,6 +18,11 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **From 95%, wakeups and scheduled jobs are refused.** At the threshold
+  where new agents are refused, `ScheduleWakeup` and `CronCreate` are now
+  refused too, with the plan window and its reset in the reason: the turn
+  each would start later runs into the limit with nobody there. Other tools
+  run as before, and `/agent-guard allow` (or `allow agents`) lifts it.
 
 ## 1.1.1 — 2026-10-23
 
