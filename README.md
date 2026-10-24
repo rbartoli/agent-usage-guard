@@ -77,6 +77,8 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 **Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and other non-terminal sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
 
+**Claude Code's own resume warning.** Since v2.1.304, on Pro and Max plans, Claude Code warns before resuming an inactive conversation, or sending to one whose cache went cold while idle, when that would use a noticeable share of your 5-hour limit: you resume anyway or start a new conversation. It shows only from a minimum share, which Anthropic sets per plan and model, so for most models it shows only on very large conversations. The guard's dormant question asks from 150k tokens, so it still covers most cold resumes, and on the largest you may see both.
+
 ## Commands
 
 ```text
@@ -92,7 +94,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 ## What it can and cannot see
 
-Checked against Claude Code v2.1.295:
+Checked against Claude Code v2.1.310:
 
 | Path | Coverage |
 |---|---|
