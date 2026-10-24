@@ -45,7 +45,7 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 | Prompt gate | Heavy prompt asks, compacts then resends as the user's own words, or cancels back into the input box; a compaction that fails or a hook vetoes puts the prompt back instead; headless holds with a reason; notifications pass untouched; dormant resumes ask or are capped across sessions; the context warning is given once, on a prompt the user typed; from 95% of a plan window, read in any session, each session is told once to wind down, and again only in a new window; a session compacted while idle is not asked |
 | Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
 | Overrides | `/agent-guard allow`, `resume`, the old markers sent alone, and the off switch; `allow` and `pause` refused when another plugin runs them |
-| Status line | Redrawn when a plan window it shows resets or an allow ends, in a session where nothing else happens |
+| Status line and band | Redrawn when a plan window it shows resets or an allow ends, in a session where nothing else happens; the band shows nothing with nothing to say, counts agents across sessions, shows an open question, a decline and the last refusal, clears on its own as they age out, and draws only where someone is at the keyboard |
 | Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; each locked window counted once, across sessions and retries; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
 
 ## What is checked by hand
