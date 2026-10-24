@@ -156,6 +156,13 @@ function agentTrips(
       leaseKey: 'burn',
       leaseUntil: until,
     })
+  } else if (burned?.fullAt !== undefined && burned.resetsAt !== undefined) {
+    trips.push({
+      rule: 'burn',
+      detail: `at this pace the 5-hour window fills by ${shortClock(burned.fullAt)}, before it resets at ${shortClock(burned.resetsAt)} (now ${burned.percent}%)`,
+      leaseKey: 'burn',
+      leaseUntil: until,
+    })
   }
 
   if (limit && limit.percent >= config.limitAskPercent) {
@@ -206,13 +213,21 @@ export function limitDetail(limit: LimitReading): string {
   return `the ${windowName(limit.kind)} window is ${limit.percent}% used${reset}`
 }
 
-/** Points the 5-hour window rose within the rolling window, across this machine. */
+/** A rise shorter or smaller than this is too coarse to project a pace from: readings move in steps. */
+const PACE_MIN_MS = 2 * 60_000
+const PACE_MIN_POINTS = 2
+
+/**
+ * Points the 5-hour window rose within the rolling window, across this
+ * machine, and, at the pace of that rise, when it fills if that comes before
+ * it resets.
+ */
 function burn(
   state: SessionState,
   peers: readonly PeerRecord[],
   now: number,
   windowMs: number,
-): { points: number; percent: number } | undefined {
+): { points: number; percent: number; resetsAt?: number; fullAt?: number } | undefined {
   const own = state.limits.five_hour
   const peerReadings = peers.flatMap((p) => (p.limit?.kind === 'five_hour' ? [p.limit] : []))
   const current = [own, ...peerReadings].reduce<LimitReading | undefined>(
@@ -225,7 +240,16 @@ function burn(
   )
   if (sameWindow.length === 0) return undefined
   const lowest = Math.min(...sameWindow.map((r) => r.percent))
-  return { points: Math.round((current.percent - lowest) * 10) / 10, percent: current.percent }
+  const points = Math.round((current.percent - lowest) * 10) / 10
+  const first = sameWindow.reduce((a, b) => (b.at < a.at ? b : a))
+  const span = current.at - first.at
+  const rise = current.percent - first.percent
+  let fullAt: number | undefined
+  if (span >= PACE_MIN_MS && rise >= PACE_MIN_POINTS && current.resetsAt !== undefined) {
+    const at = current.at + ((100 - current.percent) * span) / rise
+    if (at < current.resetsAt) fullAt = at
+  }
+  return { points, percent: current.percent, ...(current.resetsAt === undefined ? {} : { resetsAt: current.resetsAt }), ...(fullAt === undefined ? {} : { fullAt }) }
 }
 
 function notRun(resume: boolean): string {
