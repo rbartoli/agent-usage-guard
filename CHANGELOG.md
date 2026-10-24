@@ -18,6 +18,10 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **The README says what the store's keys hold.** It said the journal holds
+  a session-id prefix, which is true of each row, but every record in the
+  store is keyed by the full session id, the name of the session's
+  transcript file. The privacy section now says so.
 
 ## 1.1.1 — 2026-10-23
 
