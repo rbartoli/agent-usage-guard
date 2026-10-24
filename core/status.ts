@@ -59,6 +59,7 @@ export function statusReport(
   now: number,
   problems: readonly string[],
   version?: string,
+  storeFailure?: string,
 ): string {
   const running = version ? ` (${version})` : ''
   if (!config.enabled) return `Off${running}: AGENT_GUARD is set to turn it off.`
@@ -93,6 +94,9 @@ export function statusReport(
   for (const [key, until] of Object.entries(state.refusals)) if (now < until) held.push(`${key} declined until ${shortClock(until)}`)
   if (held.length > 0) lines.push(`Now: ${held.join('; ')}.`)
   for (const problem of problems) lines.push(`Config: ${problem}.`)
+  if (storeFailure !== undefined) {
+    lines.push(`Store: the guard could not save its counts (${storeFailure}), so other sessions on this machine don't count this session's agents. The journal may miss rows too.`)
+  }
   lines.push('', USAGE)
   return lines.join('\n')
 }

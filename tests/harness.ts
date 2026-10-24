@@ -45,6 +45,8 @@ export type World = {
   setContext(tokens: number | undefined): void
   /** The usage the next model request reports. */
   nextUsage: Record<string, number> | undefined
+  /** While true, the store refuses every write, as when it is full. */
+  storeFull: boolean
 }
 
 export function world(on: On, options: WorldOptions = {}): World {
@@ -69,10 +71,12 @@ export function world(on: On, options: WorldOptions = {}): World {
       contextTokens = tokens
     },
     nextUsage: undefined,
+    storeFull: false,
   }
 
   on('store.get', ($, e) => ({ value: structuredClone(store.get(e.key)) }))
   on('store.set', ($, e) => {
+    if (w.storeFull) throw new Error('the store would pass 4 MiB')
     store.set(e.key, structuredClone(e.value))
     return { value: undefined }
   })
