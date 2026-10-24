@@ -1,6 +1,7 @@
 // `/agent-guard` and its arguments. The command runs without a model turn and
-// the model cannot run it, so an override is always the user's. The model does
-// read the command's reply with its next request.
+// the model cannot run it, and the adapter refuses an override another plugin
+// runs, so an override is always the user's. The model does read the
+// command's reply with its next request.
 
 import { MAIN, type Scope, type SessionState, loopOf } from './state.ts'
 import { duration, sentence, shortClock } from './text.ts'

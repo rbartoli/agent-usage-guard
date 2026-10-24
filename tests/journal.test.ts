@@ -36,7 +36,7 @@ describe('lockouts and the report', () => {
       },
     })
     await start($, w, false)
-    await $.command.run({ command: 'agent-guard', args: 'allow' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow', origin: { kind: 'composer' } } as never)
     const report = await $.command.run({ command: 'agent-guard', args: 'report 3' } as never)
     expect(report.text).toMatch(/3 events from 2 sessions/)
     expect(report.text).toMatch(/Usage-limit lockouts: 1/)
@@ -46,7 +46,7 @@ describe('lockouts and the report', () => {
   test('AGENT_GUARD_JOURNAL=0 records nothing', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_JOURNAL: '0' } })
     await start($, w, false)
-    await $.command.run({ command: 'agent-guard', args: 'allow' } as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow', origin: { kind: 'composer' } } as never)
     expect(journalRows(w)).toEqual([])
   })
 

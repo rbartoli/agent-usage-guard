@@ -26,7 +26,7 @@ It acts before the spend, not after it: before an agent starts, a prompt is sent
 - **Plan-aware.** It reads the 5-hour and weekly percentages Claude Code reports, and keeps the end of the window for you.
 - **One answer covers a while.** An approval lifts its condition until it clears or times out, so the same question does not come back call after call.
 - **Local and privacy-minimal.** No network, no processes. It stores counts and coarse buckets, never prompt text, tool inputs or model output.
-- **Fails open.** If one of its hooks fails, the event goes ahead: a broken guard never breaks your session. The one exception is an agent it could not judge in time, which is refused so that Claude starts it again.
+- **Fails open.** If one of its hooks fails, the event goes ahead: a broken guard never breaks your session. The one exception is an agent it could not judge, which is refused so that Claude starts it again.
 
 ## Install
 
@@ -69,7 +69,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 
 Agents covers subagents, agent-team teammates, workflow agents, and finished subagents resumed with `SendMessage`. Each tool call is judged on the context of the loop that makes it, so a small subagent never inherits the main conversation's size.
 
-**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel while it is open are held back, and Claude starts them again once you answer. If you allow it, that condition stays allowed for a while: a plan window until it resets, a heavy context until it shrinks (for tool calls, an hour at most), the agent counts for 10 minutes. If you decline or dismiss the question, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
+**When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel while it is open are held back, and Claude starts them again once you answer. If you allow it, that condition stays allowed for a while: a plan window until it resets, a heavy context until it shrinks (for tool calls, an hour at most), the agent counts for 10 minutes. If you decline or dismiss the question, or it closes without an answer for any other reason, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
 
 **When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
 
@@ -88,7 +88,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 /agent-guard help                              these commands
 ```
 
-`/agent-guard` runs at once, even mid-turn, and never starts a model turn, so Claude never sees an override and cannot take one as permission. Sending `[allow-usage-guard]` or `[allow-agent-burst]` alone as a prompt, the markers of earlier versions, does the same as `/agent-guard allow` or `allow agents`.
+`/agent-guard` runs at once, even mid-turn, and never starts a model turn, so Claude never sees an override and cannot take one as permission. Only you can lift limits: when another plugin runs `/agent-guard allow` or `pause`, the guard refuses and says so in the transcript. Sending `[allow-usage-guard]` or `[allow-agent-burst]` alone as a prompt, the markers of earlier versions, does the same as `/agent-guard allow` or `allow agents`.
 
 ## What it can and cannot see
 
