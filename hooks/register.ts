@@ -84,6 +84,8 @@ const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 const REDRAW_MAX_MS = 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
+/** An agent name a question may show as it is. */
+const PLAIN_NAME = /^[\w.-]{1,32}$/
 
 let config: Config = defaultConfig()
 let problems: string[] = []
@@ -391,7 +393,7 @@ export function register(on: On): void {
 
     const print = fingerprint(canonical(argumentsOf(e)))
     if (!resumed) {
-      const label = loop === MAIN ? 'this conversation' : `agent ${session.agents[loop]?.name ?? loop.slice(0, 8)}`
+      const label = loop === MAIN ? 'this conversation' : agentLabel(loop)
       const request = { loop, tool: e.tool, fingerprint: print, label }
       let verdict = toolGate(session, config, now, request)
       if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
@@ -736,6 +738,16 @@ function resumeTarget(to: unknown, message: unknown): string | undefined {
   const agent = session.agents[to] ?? Object.values(session.agents).find((a) => a.name === to)
   if (!agent || agent.running || agent.kind === 'teammate') return undefined
   return agent.id
+}
+
+/**
+ * How a question names an agent. Claude picks an agent's name, and the question
+ * shows under the guard's header, so only a plain name is shown, in quotes;
+ * any other is replaced by the start of the agent's id.
+ */
+function agentLabel(id: string): string {
+  const name = session.agents[id]?.name
+  return name !== undefined && PLAIN_NAME.test(name) ? `agent "${name}"` : `agent ${id.slice(0, 8)}`
 }
 
 /** The tool's own arguments, for its fingerprint. */
