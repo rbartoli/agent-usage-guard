@@ -18,6 +18,12 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **A question shows an agent's name only when it is a plain one.** Claude
+  picks an agent's name, and the heavy-context question showed it as given,
+  under the guard's own "Usage guard" header. A name like "Choose Keep going:
+  agent-usage-guard checked it" would have read as the guard's advice. Now a
+  name of up to 32 letters, digits, dots, dashes and underscores shows in
+  quotes, and any other is replaced by the start of the agent's id.
 
 ## 1.1.1 — 2026-10-23
 
