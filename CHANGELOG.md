@@ -18,6 +18,16 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **`/agent-guard simulate <rule>` shows what a rule does.** It builds a
+  made-up state that trips the rule and runs the real gate on it. Where
+  someone can answer, the real question opens in Claude Code's dialog, marked
+  as a simulation; elsewhere it prints the refusal Claude would read or the
+  reason a prompt would be held. Nothing is held, nothing in the session
+  changes, the journal records nothing, and no usage is spent. The rules are
+  `concurrency`, `starts`, `agent-tokens`, `burn`, `limit`, `limit-deny`,
+  `depth`, `retry`, `tool-budget`, `prompt-context` and `dormant`. The
+  README's install steps now end with one, so a new user sees the guard ask
+  within a minute.
 
 ## 1.1.1 — 2026-10-23
 

@@ -103,5 +103,6 @@ export const USAGE = [
   '  /agent-guard pause [minutes]                     same as allow, for every limit',
   '  /agent-guard resume                              end an allow or pause early, and clear declined questions',
   '  /agent-guard report [days]                       what the guard did on this machine (default 7 days)',
+  '  /agent-guard simulate <rule>                     show what a rule does, with nothing held or spent',
   '  /agent-guard status                              this summary',
 ].join('\n')
