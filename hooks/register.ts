@@ -30,6 +30,7 @@ import {
   heldForQuestion,
   helpText,
   highestLimit,
+  isHaiku,
   isJournalRow,
   journalKey,
   livePeers,
@@ -342,24 +343,29 @@ export function register(on: On): void {
     if (resumed !== undefined && gatedResumes.has(resumed)) return next(e)
     const known = resumed === undefined ? undefined : session.agents[resumed]
     const parentDepth = e.parentAgentId ? (session.agents[e.parentAgentId]?.depth ?? 1) : 0
-    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined }
+    // A fork runs on its parent's model; any other agent on the one it names, else its own definition's or its parent's.
+    const asked = config.haikuExempt && isHaiku(e.fork ? e.parentModel : e.model)
+    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined, cheap: known?.cheap ?? asked }
     const { verdict, reservedAt } = await agentVerdict($, now, request)
     if (verdict.kind === 'deny') {
       await journalDenial($, verdict, 'Agent')
       return { deny: verdict.message }
     }
     let started: string | undefined
+    let cheap = request.cheap
     try {
       const result = await next(e)
       if (!result.deny && result.agentId) {
         started = result.agentId
         const kind = e.isTeammate ? 'teammate' : e.workflow ? 'workflow' : e.fork ? 'fork' : 'subagent'
+        // The model it runs on is known only now: an agent's own definition may pick Haiku.
+        if (!known) cheap = config.haikuExempt && isHaiku(result.model)
         if (known) observeAgentActive(session, started)
-        else observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
+        else observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, cheap, ...(e.name ? { name: e.name } : {}) })
       }
       return result
     } finally {
-      if (reservedAt !== undefined) releaseStart(session, reservedAt, started)
+      if (reservedAt !== undefined) releaseStart(session, reservedAt, started, cheap)
       await publish($, await $.clock.now())
     }
   }).catch(($, e, next) =>
@@ -379,7 +385,8 @@ export function register(on: On): void {
     if (e.tool === 'SendMessage') {
       const target = resumeTarget(e.to, e.message)
       if (target) {
-        const { verdict, reservedAt } = await agentVerdict($, now, { loop, depth: session.agents[target]!.depth, resume: true })
+        const agent = session.agents[target]!
+        const { verdict, reservedAt } = await agentVerdict($, now, { loop, depth: agent.depth, resume: true, cheap: agent.cheap === true })
         if (verdict.kind === 'deny') {
           await journalDenial($, verdict, 'SendMessage')
           return { deny: verdict.message }
@@ -411,7 +418,7 @@ export function register(on: On): void {
       if (resumed) {
         gatedResumes.delete(resumed.id)
         const delivered = result !== undefined && !result.deny && !result.isError
-        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined)
+        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined, session.agents[resumed.id]?.cheap === true)
         if (delivered) observeAgentActive(session, resumed.id)
         await publish($, await $.clock.now())
       }
@@ -450,6 +457,7 @@ async function loadConfig($: Api): Promise<void> {
   const parsed = parseConfig({
     AGENT_GUARD: await $.env.get('AGENT_GUARD'),
     AGENT_GUARD_JOURNAL: await $.env.get('AGENT_GUARD_JOURNAL'),
+    AGENT_GUARD_HAIKU_EXEMPT: await $.env.get('AGENT_GUARD_HAIKU_EXEMPT'),
     AGENT_GUARD_WINDOW_SECONDS: await $.env.get('AGENT_GUARD_WINDOW_SECONDS'),
     AGENT_GUARD_AGENT_MAX: await $.env.get('AGENT_GUARD_AGENT_MAX'),
     AGENT_GUARD_ROLLING_MAX: await $.env.get('AGENT_GUARD_ROLLING_MAX'),

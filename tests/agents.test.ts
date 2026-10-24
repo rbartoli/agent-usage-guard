@@ -206,6 +206,36 @@ describe('agent gate', () => {
   })
 })
 
+describe('Haiku agents', () => {
+  const haiku = async ($: Engine, w: ReturnType<typeof world>) => {
+    w.ran.push('spawn')
+    return (await $.agent.spawn({ prompt: 'work', description: 'test agent', subagentType: 'general-purpose', model: 'haiku' } as never)) as Record<string, unknown>
+  }
+
+  test('a Haiku agent passes the running and starts caps and does not count against them', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_ROLLING_MAX: '6' } })
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    for (let i = 0; i < 5; i++) expect((await haiku($, w)).agentId).toBeDefined()
+    expect(String((await spawn($, w)).deny)).toMatch(/4 agents are running on this machine/)
+    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ running: 4, starts: [T0, T0, T0, T0] })
+  })
+
+  test('an agent whose own definition runs it on Haiku stops counting once it starts', async ($, on) => {
+    const w = world(on, { spawnModel: 'claude-haiku-4-5' })
+    await start($, w, false)
+    for (let i = 0; i < 6; i++) expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ running: 0, starts: [] })
+  })
+
+  test('AGENT_GUARD_HAIKU_EXEMPT=0 counts Haiku agents like any other', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_HAIKU_EXEMPT: '0' } })
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) await haiku($, w)
+    expect(String((await haiku($, w)).deny)).toMatch(/4 agents are running on this machine/)
+  })
+})
+
 describe('plan-window gate', () => {
   const measure = (percent: number, resetsAt = '2027-01-15T15:00:00.000Z', kind = 'five_hour') => ({
     context: { window: 1_000_000 },
