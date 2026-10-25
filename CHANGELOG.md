@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.2 — 2026-10-24
 
 - **Only you can lift the guard's limits.** `/agent-guard allow` and `pause`
   now check where the command came from. When another plugin runs them
