@@ -2,11 +2,14 @@
 // and requests, asks the user when a verdict needs an answer, and keeps the
 // cross-session records in $.store. Every decision lives in ../core.
 
-import type { EngineInterface, On, Timer } from 'claude-code'
+import type { EngineInterface, On, RenderElement, Timer } from 'claude-code'
+
+import type { Band } from '../types'
 
 import {
   type AgentRequest,
   type Ask,
+  type Asking,
   type Config,
   DEFAULT_ALLOW_MINUTES,
   type Deny,
@@ -21,6 +24,8 @@ import {
   type Verdict,
   agentGate,
   applyOverride,
+  bandExpiry,
+  bandLine,
   canonical,
   contextBucket,
   defaultConfig,
@@ -69,6 +74,8 @@ import {
 type Api = EngineInterface
 
 const COMMAND = 'agent-guard'
+/** What the band above the prompt draws, kept where a redraw reads it. */
+const BAND = { plugin: 'agent-usage-guard', key: 'band' } as const
 const PEER_PREFIX = 'peer:'
 const LAST_ACTIVE_PREFIX = 'last-active:'
 const HEARTBEAT_MS = 60_000
@@ -99,6 +106,7 @@ let lastPublished = 0
 /** The last-active time this process last stored, so a heartbeat does not rewrite it. */
 let lastActiveKept: number | undefined
 let lastStatus: string | undefined
+let lastBand: string | undefined
 /** The pending redraw of the status line, and the time it is for. */
 let redraw: { at: number; timer: Timer } | undefined
 let compactAfterTurn = false
@@ -418,6 +426,16 @@ export function register(on: On): void {
     }
   }).catch(($, e, next) => failOpen($, 'tool.call', next.error, () => next(e)))
 
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const { value } = await $.state.get(BAND)
+    if (!value || e.props.hasSurvey) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const line = h(Text, value.alert ? { bold: true, wrap: 'truncate-end' } : { dimColor: true, wrap: 'truncate-end' }, value.text)
+    // The band is one slot: what other plugins draw there stays, under the guard's line.
+    const beneath = await next(e)
+    return h(Box, { flexDirection: 'column' }, line, beneath) as RenderElement
+  }).catch(($, e, next) => next(e))
+
   on('command.run', { command: COMMAND }, async ($, e) => {
     const now = await $.clock.now()
     const command = parseCommand(e.args)
@@ -548,6 +566,7 @@ async function publish($: Api, now: number): Promise<void> {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
   await keepLastActive($)
+  await refreshStatus($)
 }
 
 /**
@@ -605,7 +624,9 @@ async function refreshStatus($: Api): Promise<void> {
   if (!interactive) return
   try {
     const now = await $.clock.now()
-    redrawAt($, statusLineExpiry(session, peers, config, now), now)
+    const expiries = [statusLineExpiry(session, peers, config, now), bandExpiry(session, peers, config, now)].filter((t) => t !== undefined)
+    redrawAt($, expiries.length > 0 ? Math.min(...expiries) : undefined, now)
+    await drawBand($, now)
     const text = statusLine(session, peers, config, now)
     if (text === lastStatus) return
     lastStatus = text
@@ -613,6 +634,17 @@ async function refreshStatus($: Api): Promise<void> {
   } catch (error) {
     $.ui.log(`agent-usage-guard could not update its status line: ${String(error)}`, { to: 'debug' })
   }
+}
+
+/** Hands the band its line when it changed; the band redraws from it. */
+async function drawBand($: Api, now: number): Promise<void> {
+  const keys = [...pending.keys()]
+  const asking: Asking = { agents: keys.includes('agents'), context: keys.some((k) => k.startsWith('heavy:')) }
+  const band: Band | null = bandLine(session, peers, config, now, asking) ?? null
+  const drawn = band === null ? undefined : JSON.stringify(band)
+  if (drawn === lastBand) return
+  lastBand = drawn
+  await $.state.set(BAND, band)
 }
 
 /** Redraws the status line at `at`, when something it shows runs out: a quiet session has no event that would. */
@@ -670,16 +702,18 @@ async function journalAnswer($: Api, ask: Ask, asked: Asked, choice?: string): P
  * open is held back at once, and the model makes it again once it is
  * answered. Waiting instead could outlast the hook's time limit.
  */
-async function oneAtATime<T>(key: string, held: () => T, run: () => Promise<T>): Promise<T> {
+async function oneAtATime<T>($: Api, key: string, held: () => T, run: () => Promise<T>): Promise<T> {
   // The check for an open question and the claim on it must not straddle an
   // await, or two parallel calls would each ask.
   if (pending.has(key)) return held()
   const asking = run()
   pending.set(key, asking)
   try {
+    await refreshStatus($)
     return await asking
   } finally {
     pending.delete(key)
+    await refreshStatus($)
   }
 }
 
@@ -703,7 +737,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
   const verdict = agentGate(session, peers, config, now, request)
   if (verdict.kind === 'allow') return { verdict, reservedAt: reserveStart(session, now) }
   if (verdict.kind !== 'ask') return { verdict }
-  return oneAtATime<AgentVerdict>('agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
+  return oneAtATime<AgentVerdict>($, 'agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
     const asked = await askUser($, verdict)
     const resolved = asked.unavailable
       ? agentGate(session, peers, config, asked.at, request)
@@ -717,7 +751,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
 
 /** The heavy-context question, one per loop at a time. */
 async function settleHeavy($: Api, ask: Ask, request: ToolRequest): Promise<Verdict> {
-  return oneAtATime(`heavy:${ask.loop}`, () => heldForQuestion('heavy'), async () => {
+  return oneAtATime($, `heavy:${ask.loop}`, () => heldForQuestion('heavy'), async () => {
     const asked = await askUser($, ask, contextBucket(session.loops[ask.loop]?.context))
     if (asked.unavailable) {
       await journalAnswer($, ask, asked)

@@ -18,6 +18,15 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
+- **A band above the prompt shows the guard's own state.** Until now, what
+  the guard counted and held showed only in `/agent-guard status`. While
+  agents run on this machine, or the guard is asking, holding or has just
+  refused something, a line above the prompt now shows it, such as
+  "Usage guard · 3 of 4 agents running · 5 of 12 started in the last 10 min ·
+  last refusal 14:22: concurrency". It counts every session on the machine,
+  turns bold once a limit is reached or something is held, and clears on its
+  own once what it shows ages out. Other plugins' content in that band stays,
+  under the guard's line. Plan windows and context stay in the status line.
 
 ## 1.1.1 — 2026-10-23
 
