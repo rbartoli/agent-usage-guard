@@ -21,6 +21,11 @@
   a percentage from 0 to 1,000, or it is left out and the record's counts
   still count. Journal rows read back for `/agent-guard report`, which Claude
   also reads, must hold only the values the guard writes.
+- **The guard says when its store stops saving.** The mod store holds 4 MiB
+  in all, and a write that failed was logged only to the debug log. Other
+  sessions then stopped counting this session's agents, with no sign. Now the
+  status line reads "store not saving: other sessions can't count this one",
+  and `/agent-guard status` gives the error, until a write works again.
 
 ## 1.1.3 — 2026-10-31
 
