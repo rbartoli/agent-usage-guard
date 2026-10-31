@@ -26,6 +26,15 @@
   sessions then stopped counting this session's agents, with no sign. Now the
   status line reads "store not saving: other sessions can't count this one",
   and `/agent-guard status` gives the error, until a write works again.
+- **Scheduled and relayed prompts go through the prompt gate.** A schedule
+  or `/loop` firing, a message relayed from a channel such as Slack, and a
+  Slack ping started a turn the gate never looked at, so a `/loop` on a
+  520k-token session re-read it all every time, unasked. They are now held
+  as in `claude -p`: a heavy one is held with the reason, and a dormant heavy
+  one counts against the machine-wide cap. They never lift limits: a bracket
+  marker from them is an ordinary prompt, and `/agent-guard allow` from them
+  is refused. Background-task notifications and other sessions' messages
+  still pass untouched.
 
 ## 1.1.3 — 2026-10-31
 
