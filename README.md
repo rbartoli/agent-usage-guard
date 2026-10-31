@@ -75,7 +75,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 **What it leaves alone.** It never holds a background task's notification or another session's message, because that would lose the result. It no longer blocks prompts after a usage limit: since v2.1.234, Claude Code waits at a limit and continues at reset on its own (`autoContinueAtUsageLimit`). The guard's job is to keep you from reaching the limit, and its journal counts the lockouts it did not prevent. Near the limit it only adds a note: from 95%, each session's next prompt tells Claude to finish the step in progress, start nothing large, and end the turn with what is done and what is left, so a lockout finds every session at a clean stop.
 
-**Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and other non-terminal sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
+**Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Since v2.1.314 it also runs in VS Code and Claude Desktop's Code tab, for subscribers with telemetry turned off, and on Bedrock, Vertex, Foundry and LLM gateways once the one-hour prompt cache is on. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and SDK sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
 
 **Claude Code's own resume warning.** Since v2.1.304, on Pro and Max plans, Claude Code warns before resuming an inactive conversation, or sending to one whose cache went cold while idle, when that would use a noticeable share of your 5-hour limit: you resume anyway or start a new conversation. It shows only from a minimum share, which Anthropic sets per plan and model, so for most models it shows only on very large conversations. The guard's dormant question asks from 150k tokens, so it still covers most cold resumes, and on the largest you may see both.
 
@@ -94,7 +94,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 ## What it can and cannot see
 
-Checked against Claude Code v2.1.310:
+Checked against Claude Code v2.1.316:
 
 | Path | Coverage |
 |---|---|
@@ -110,7 +110,7 @@ Checked against Claude Code v2.1.310:
 
 Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p` and the Agent SDK. They don't run in a Desktop-app WSL session ([where mods run](https://code.claude.com/docs/en/plugins/mods/overview#where-mods-run)).
 
-**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). It has no limit on the total number of agents a session starts. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
+**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). It has no limit on the total number of agents a session starts. Since v2.1.316, `CLAUDE_CODE_SUBAGENT_EFFORT` sets the effort subagents run at when nothing else names one, instead of the session's: a lower one makes each agent cheaper, and the guard still limits how many run. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
 
 ## See what it did
 
