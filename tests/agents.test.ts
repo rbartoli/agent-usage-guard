@@ -108,10 +108,10 @@ describe('agent gate', () => {
   })
 
   test('an agent the guard failed to judge is refused, so Claude starts it again', async ($, on) => {
-    // Another session's record with a window kind that is not a string makes the gate throw.
-    const peer = { v: 2, at: T0, running: 0, starts: [], agentTokens: [], dormantResumes: [], limit: { at: T0, kind: 5, percent: 99 } }
-    const w = world(on, { store: { 'peer:other-session': peer } })
+    const w = world(on)
     await start($, w, true)
+    // A plan reading whose window kind is not a string makes the gate throw.
+    await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [{ kind: 5, percentUsed: 99 }], changed: ['rateLimits'] } as never)
     const refused = await spawn($, w)
     expect(refused.agentId).toBeUndefined()
     expect(String(refused.deny)).toMatch(/^agent-usage-guard could not judge this agent\. Start it again\./)
@@ -203,6 +203,18 @@ describe('agent gate', () => {
     await respond($, w, 600_000, String(agent.agentId))
     await spawn($, w)
     expect(w.questions[0]).toMatch(/subagents processed 1\.2M tokens in the last 10 min \(limit 1M\)/i)
+  })
+  test('a store that stops saving shows in the status line and the status, until a save works again', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    w.storeFull = true
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBe("store not saving: other sessions can't count this one")
+    const status = await $.command.run({ command: 'agent-guard', args: 'status', origin: TYPED } as never)
+    expect(status.text).toMatch(/^Store: the guard could not save its counts \(.+\), so other sessions on this machine don't count this session's agents\./m)
+    w.storeFull = false
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBeUndefined()
   })
 })
 
