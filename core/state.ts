@@ -51,7 +51,7 @@ export type LimitReading = {
 
 export type Scope = 'all' | 'agents' | 'context'
 
-export type Denial = { at: number; key: string; agent: boolean }
+export type Denial = { at: number; key: string; agent: boolean; rule: string }
 
 export type SessionState = {
   id: string

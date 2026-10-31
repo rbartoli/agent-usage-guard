@@ -49,7 +49,7 @@ export {
   prune,
 } from './state.ts'
 export { SIMULATED, type SimulatedRule, simulate } from './simulate.ts'
-export { USAGE, statusLine, statusLineExpiry, statusReport } from './status.ts'
+export { type Asking, USAGE, bandExpiry, bandLine, statusLine, statusLineExpiry, statusReport } from './status.ts'
 export { canonical, contextBucket, fingerprint } from './text.ts'
 export { type HeavyOutcome, type ToolRequest, isScheduling, resolveHeavyAsk, scheduleGate, toolGate } from './tools.ts'
 export { type Ask, type Deny, type Family, HEADER, type Rule, SIGNATURE, type Verdict } from './verdict.ts'

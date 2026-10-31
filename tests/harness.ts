@@ -1,7 +1,7 @@
 // Stubs for everything the mod asks Claude Code for, so each test drives the
 // real hooks module with no session, model, network or disk.
 
-import type { On } from 'claude-code'
+import type { On, RenderElement } from 'claude-code'
 import { type Engine, type MockClock, mock } from 'claude-code/testing'
 
 export const T0 = Date.UTC(2027, 0, 15, 12, 0, 0)
@@ -17,6 +17,8 @@ export type WorldOptions = {
   answers?: Array<string | undefined>
   /** The session has no AskUserQuestion tool, as with `--tools Agent,Read`. */
   noQuestionTool?: boolean
+  /** Holds each question open until it resolves, so a test can look while it is asked. */
+  questionHeld?: () => Promise<void>
   /** The question dialog fails to open, as on an engine error. */
   askFails?: boolean
   /** Claude Code's answer to a tool call the test fires; a promise keeps the call running. */
@@ -121,14 +123,20 @@ export function world(on: On, options: WorldOptions = {}): World {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage } as never
   })
   on('turn.complete', () => ({ text: '' }))
+  // The engine's own band above the prompt: empty, as with no survey.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return h(Box, null) as RenderElement
+  })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('agent.spawn', async ($, e) => {
     const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
     return { model: (e.model as string | undefined) ?? options.spawnModel ?? 'claude-test', agentId } as never
   })
-  on('tool.call', ($, e) => {
+  on('tool.call', async ($, e) => {
     if (e.tool === 'AskUserQuestion') {
+      await options.questionHeld?.()
       if (options.noQuestionTool) return { deny: 'no tool named "AskUserQuestion" in this session' }
       if (options.askFails) throw new Error('the dialog could not open')
       const questions = e.questions as Array<{ question: string; options: Array<{ label: string }> }>

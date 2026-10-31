@@ -25,6 +25,53 @@ export function statusLine(state: SessionState, peers: readonly PeerRecord[], co
   return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
+/** Which questions are open now, for the band. */
+export type Asking = { agents: boolean; context: boolean }
+
+/**
+ * The band above the prompt: the guard's own state while it has something to
+ * say, the agents on this machine against their limits first. `alert` when a
+ * limit is reached or the guard is holding something.
+ */
+export function bandLine(
+  state: SessionState,
+  peers: readonly PeerRecord[],
+  config: Config,
+  now: number,
+  asking: Asking,
+): { text: string; alert: boolean } | undefined {
+  if (!config.enabled) return undefined
+  const window = config.windowMs
+  const running = runningAgents(state) + peers.reduce((sum, p) => sum + p.running, 0)
+  const starts = countOnMachine(state, peers, 'starts', now, window)
+  const declined = state.refusals.agents !== undefined && now < state.refusals.agents ? state.refusals.agents : undefined
+  const paused = state.fuseUntil !== undefined && now < state.fuseUntil ? state.fuseUntil : undefined
+  const refusal = state.denials.filter((d) => now - d.at < window).at(-1)
+
+  const parts: string[] = []
+  if (running > 0 || starts > 0) parts.push(`${running} of ${config.agentMax} agents running`)
+  if (starts > 0) parts.push(`${starts} of ${config.rollingMax} started in the last ${duration(window)}`)
+  if (asking.agents) parts.push('asking you about starting agents')
+  if (asking.context) parts.push('asking you about the context size')
+  if (declined !== undefined) parts.push(`new agents declined until ${shortClock(declined)}`)
+  if (paused !== undefined) parts.push(`agent spawns paused until ${shortClock(paused)}`)
+  if (refusal) parts.push(`last refusal ${shortClock(refusal.at)}: ${refusal.rule}`)
+  if (parts.length === 0) return undefined
+
+  const holding = asking.agents || asking.context || declined !== undefined || paused !== undefined || refusal !== undefined
+  const full = running >= config.agentMax || starts >= config.rollingMax
+  return { text: `Usage guard · ${parts.join(' · ')}`, alert: holding || full }
+}
+
+/** When the band changes with no event to redraw it: a start, a refusal, a decline or the pause ages out. */
+export function bandExpiry(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): number | undefined {
+  if (!config.enabled) return undefined
+  const window = config.windowMs
+  const aging = [...state.starts, ...peers.flatMap((p) => p.starts), ...state.denials.map((d) => d.at)].map((t) => t + window)
+  const later = [...aging, state.refusals.agents, state.fuseUntil].filter((t): t is number => t !== undefined && t > now)
+  return later.length > 0 ? Math.min(...later) : undefined
+}
+
 /** When the line changes with no event to redraw it: an allow or the fuse ends, or the most-used plan window resets. */
 export function statusLineExpiry(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number): number | undefined {
   if (!config.enabled) return undefined
