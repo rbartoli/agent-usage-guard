@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.3 — 2026-10-31
 
 - **The guard never submits a prompt or writes in the input box.** "Compact,
   then send" is now "Compact first": the guard compacts, and the prompt you
