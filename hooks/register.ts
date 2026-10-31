@@ -84,6 +84,8 @@ const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 const REDRAW_MAX_MS = 86_400_000
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
+/** An agent name a question may show as it is. */
+const PLAIN_NAME = /^[\w.-]{1,32}$/
 
 let config: Config = defaultConfig()
 let problems: string[] = []
@@ -300,35 +302,15 @@ export function register(on: On): void {
       return send(alone.kind === 'allow' ? alone.note : undefined)
     }
     const outcome = resolvePromptAsk(session, verdict, asked.answer)
-    await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
+    await journalAnswer($, verdict, asked, outcome.kind === 'compact-first' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
     if (outcome.kind === 'allow') return send(promptNotes(session, peers, config, asked.at))
-    if (outcome.kind === 'compact-then-send') {
-      const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
-      // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
-      // The put-back can land before or after the first look, so look again before sending.
-      const takeBack = async () => {
-        if ((await $.prompt.read()).text === resend.text) await fillInput($, '')
-      }
+    // Claude Code puts a dropped prompt back in the input box, where it waits through a compaction.
+    if (outcome.kind === 'compact-first') {
       $.clock.after(0, async () => {
-        await takeBack()
-        // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
-        if (failed !== undefined) {
-          $.ui.log(`agent-usage-guard could not compact (${failed}), so your prompt is back in the input box.`)
-          await fillInput($, resend.text)
-          return
-        }
-        await takeBack()
-        try {
-          await $.prompt.submit({ ...resend, asUser: true })
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not resend your prompt: ${String(error)}`)
-          await fillInput($, resend.text)
-        }
+        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}); your prompt is still in the input box.`)
       })
-      return { drop: outcome.message }
     }
-    await fillInput($, e.text)
     return { drop: outcome.message }
   }).catch(($, e, next) => failOpen($, 'prompt.submit', next.error, () => next(e)))
 
@@ -391,7 +373,7 @@ export function register(on: On): void {
 
     const print = fingerprint(canonical(argumentsOf(e)))
     if (!resumed) {
-      const label = loop === MAIN ? 'this conversation' : `agent ${session.agents[loop]?.name ?? loop.slice(0, 8)}`
+      const label = loop === MAIN ? 'this conversation' : agentLabel(loop)
       const request = { loop, tool: e.tool, fingerprint: print, label }
       let verdict = toolGate(session, config, now, request)
       if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
@@ -738,16 +720,21 @@ function resumeTarget(to: unknown, message: unknown): string | undefined {
   return agent.id
 }
 
+/**
+ * How a question names an agent. Claude picks an agent's name, and the question
+ * shows under the guard's header, so only a plain name is shown, in quotes;
+ * any other is replaced by the start of the agent's id.
+ */
+function agentLabel(id: string): string {
+  const name = session.agents[id]?.name
+  return name !== undefined && PLAIN_NAME.test(name) ? `agent "${name}"` : `agent ${id.slice(0, 8)}`
+}
+
 /** The tool's own arguments, for its fingerprint. */
 function argumentsOf(e: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const args: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(e)) if (!ENVELOPE_KEYS.has(key)) args[key] = value
   return { tool: e.tool, args }
-}
-
-/** Puts `text` in the input box; a failure leaves the box as it was. */
-async function fillInput($: Api, text: string): Promise<void> {
-  await $.prompt.fill({ text }).catch(() => undefined)
 }
 
 /** Journals a refusal the model reads. */
