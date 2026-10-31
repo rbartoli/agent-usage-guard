@@ -302,35 +302,15 @@ export function register(on: On): void {
       return send(alone.kind === 'allow' ? alone.note : undefined)
     }
     const outcome = resolvePromptAsk(session, verdict, asked.answer)
-    await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
+    await journalAnswer($, verdict, asked, outcome.kind === 'compact-first' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
     if (outcome.kind === 'allow') return send(promptNotes(session, peers, config, asked.at))
-    if (outcome.kind === 'compact-then-send') {
-      const resend = { text: e.text, ...(e.attachments ? { attachments: e.attachments } : {}) }
-      // Claude Code puts a dropped prompt back in the input box; this one is sent for the user.
-      // The put-back can land before or after the first look, so look again before sending.
-      const takeBack = async () => {
-        if ((await $.prompt.read()).text === resend.text) await fillInput($, '')
-      }
+    // Claude Code puts a dropped prompt back in the input box, where it waits through a compaction.
+    if (outcome.kind === 'compact-first') {
       $.clock.after(0, async () => {
-        await takeBack()
-        // Sending at full size after a failed compaction is the one thing the user chose against.
         const failed = await compact($)
-        if (failed !== undefined) {
-          $.ui.log(`agent-usage-guard could not compact (${failed}), so your prompt is back in the input box.`)
-          await fillInput($, resend.text)
-          return
-        }
-        await takeBack()
-        try {
-          await $.prompt.submit({ ...resend, asUser: true })
-        } catch (error) {
-          $.ui.log(`agent-usage-guard could not resend your prompt: ${String(error)}`)
-          await fillInput($, resend.text)
-        }
+        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}); your prompt is still in the input box.`)
       })
-      return { drop: outcome.message }
     }
-    await fillInput($, e.text)
     return { drop: outcome.message }
   }).catch(($, e, next) => failOpen($, 'prompt.submit', next.error, () => next(e)))
 
@@ -755,11 +735,6 @@ function argumentsOf(e: Readonly<Record<string, unknown>>): Record<string, unkno
   const args: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(e)) if (!ENVELOPE_KEYS.has(key)) args[key] = value
   return { tool: e.tool, args }
-}
-
-/** Puts `text` in the input box; a failure leaves the box as it was. */
-async function fillInput($: Api, text: string): Promise<void> {
-  await $.prompt.fill({ text }).catch(() => undefined)
 }
 
 /** Journals a refusal the model reads. */
