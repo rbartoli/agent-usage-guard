@@ -13,6 +13,13 @@ export type AgentRequest = {
   depth: number
   /** True when a finished agent is being sent a new task. */
   resume: boolean
+  /** It runs on Haiku: the running and starts caps leave it out. */
+  cheap?: boolean
+}
+
+/** A model id or alias for Haiku, the tier the running and starts caps leave out. */
+export function isHaiku(model: string | undefined): boolean {
+  return model !== undefined && /haiku/i.test(model)
 }
 
 const AGENT_ALLOW = 'Allow'
@@ -43,7 +50,7 @@ export function agentGate(
     return refuse(state, config, now, 'limit-deny', 'limit-deny', base, true)
   }
 
-  const trips = agentTrips(state, peers, config, now, limit).filter((t) => !leased(state, t, now))
+  const trips = agentTrips(state, peers, config, now, limit, request.cheap === true).filter((t) => !leased(state, t, now))
   if (trips.length === 0) return ALLOW
 
   const details = join(trips.map((t) => t.detail))
@@ -112,6 +119,7 @@ function agentTrips(
   config: Config,
   now: number,
   limit: LimitReading | undefined,
+  cheap: boolean,
 ): Trip[] {
   const window = config.windowMs
   const span = duration(window)
@@ -119,7 +127,7 @@ function agentTrips(
   const trips: Trip[] = []
 
   const running = runningAgents(state) + peers.reduce((sum, p) => sum + p.running, 0)
-  if (running >= config.agentMax) {
+  if (!cheap && running >= config.agentMax) {
     trips.push({
       rule: 'concurrency',
       detail: `${count(running, 'agent')} ${running === 1 ? 'is' : 'are'} running on this machine (limit ${config.agentMax})`,
@@ -129,7 +137,7 @@ function agentTrips(
   }
 
   const starts = countOnMachine(state, peers, 'starts', now, window)
-  if (starts >= config.rollingMax) {
+  if (!cheap && starts >= config.rollingMax) {
     trips.push({
       rule: 'starts',
       detail: `${count(starts, 'agent')} started on this machine in the last ${span} (limit ${config.rollingMax})`,

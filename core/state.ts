@@ -22,6 +22,8 @@ export type AgentRecord = {
   running: boolean
   startedAt: number
   name?: string
+  /** It runs on Haiku, so the running and starts counts leave it out. */
+  cheap?: boolean
 }
 
 export type LoopState = {
@@ -152,7 +154,7 @@ export function countOnMachine(
 
 /** Running agents, counting those allowed a moment ago that are still starting. */
 export function runningAgents(state: SessionState): number {
-  return Object.values(state.agents).filter((a) => a.running).length + state.pendingStarts
+  return Object.values(state.agents).filter((a) => a.running && !a.cheap).length + state.pendingStarts
 }
 
 export function overrideCovers(state: SessionState, now: number, scope: Exclude<Scope, 'all'>): boolean {

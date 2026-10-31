@@ -23,6 +23,8 @@ export type WorldOptions = {
   toolResult?: (e: ToolEvent) => Record<string, unknown> | Promise<Record<string, unknown>>
   /** What `$.session.compact()` answers, such as `{ skip }` when a hook vetoes it. */
   compactResult?: () => Record<string, unknown>
+  /** The model a spawn reports it runs on when the call names none, as an agent's own definition picks. */
+  spawnModel?: string
   /** Runs inside every agent spawn before it answers, so a test can hold one while it starts. */
   onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
@@ -123,7 +125,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   on('agent.spawn', async ($, e) => {
     const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
-    return { model: 'claude-test', agentId } as never
+    return { model: (e.model as string | undefined) ?? options.spawnModel ?? 'claude-test', agentId } as never
   })
   on('tool.call', ($, e) => {
     if (e.tool === 'AskUserQuestion') {

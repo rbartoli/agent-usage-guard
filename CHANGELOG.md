@@ -47,6 +47,13 @@
   minutes. The question says when: "At this pace the 5-hour window fills by
   12:43, before it resets at 15:00 (now 38%)". A rise of under two points, or
   over less than two minutes, projects nothing, since readings move in steps.
+- **Haiku agents stay out of the running and starts limits.** A burst of
+  Haiku agents, such as Explore searches, asked like any fan-out, though
+  Haiku draws far less on a plan's usage than larger models. An agent Claude starts on Haiku
+  now passes the running and starts limits and doesn't count against them;
+  one whose own definition picks Haiku stops counting once it starts. Haiku
+  agents still count toward the subagent token budget and every plan-window
+  rule. `AGENT_GUARD_HAIKU_EXEMPT=0` counts them like any other.
 
 ## 1.1.3 — 2026-10-31
 
