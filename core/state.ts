@@ -221,21 +221,54 @@ export function livePeers(records: readonly unknown[], now: number, ttlMs: numbe
   for (const record of records) {
     if (!isPeerRecord(record)) continue
     if (now - record.at > ttlMs) continue
-    peers.push(record)
+    // A reading this version cannot use leaves the record's counts standing.
+    const { limit, ...counts } = record
+    peers.push(limit === undefined || isLimitReading(limit) ? record : counts)
   }
   return peers
 }
 
+/**
+ * Another session's counts, checked value by value: a negative count would
+ * switch off a limit. Its plan reading is checked apart, by `isLimitReading`.
+ */
 function isPeerRecord(value: unknown): value is PeerRecord {
   if (typeof value !== 'object' || value === null) return false
   const r = value as Record<string, unknown>
   return (
     r.v === 2 &&
-    typeof r.at === 'number' &&
-    typeof r.running === 'number' &&
-    Array.isArray(r.starts) &&
+    isFinite(r.at) &&
+    Number.isInteger(r.running) &&
+    (r.running as number) >= 0 &&
+    isTimes(r.starts) &&
     Array.isArray(r.agentTokens) &&
-    r.agentTokens.every((p) => Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number') &&
-    Array.isArray(r.dormantResumes)
+    r.agentTokens.every((p) => Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]) && p[1] >= 0) &&
+    isTimes(r.dormantResumes)
   )
+}
+
+/** A window kind as Claude Code names it: `five_hour`, `seven_day`, `spend_limit`. */
+export const WINDOW_KIND = /^[a-z_]{1,32}$/
+
+/** A plan reading another session shared: its window kind reaches Claude in notes and refusals. */
+function isLimitReading(value: unknown): value is LimitReading {
+  if (typeof value !== 'object' || value === null) return false
+  const r = value as Record<string, unknown>
+  return (
+    isFinite(r.at) &&
+    typeof r.kind === 'string' &&
+    WINDOW_KIND.test(r.kind) &&
+    isFinite(r.percent) &&
+    r.percent >= 0 &&
+    r.percent <= 1000 &&
+    (r.resetsAt === undefined || isFinite(r.resetsAt))
+  )
+}
+
+function isTimes(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isFinite)
+}
+
+function isFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
