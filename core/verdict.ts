@@ -10,6 +10,8 @@ export type Rule =
   | 'depth'
   | 'fuse'
   | 'limit-deny'
+  // A wakeup or scheduled job, past the refusal threshold.
+  | 'schedule'
   // Agents, asked when someone can answer.
   | 'concurrency'
   | 'starts'

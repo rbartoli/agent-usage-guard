@@ -2,7 +2,7 @@
 // no clock: an adapter reports facts, asks for verdicts, and carries them out.
 // See docs/architecture.md for the contract an adapter keeps.
 
-export { type AgentRequest, agentGate, heldForQuestion, highestLimit, resolveAgentAsk } from './agents.ts'
+export { type AgentRequest, agentGate, heldForQuestion, highestLimit, isHaiku, resolveAgentAsk } from './agents.ts'
 export { type Command, DEFAULT_ALLOW_MINUTES, applyOverride, helpText, parseCommand, resumeGuard } from './commands.ts'
 export { type Config, SPECS, SWITCHES, defaultConfig, parseConfig } from './config.ts'
 export { type JournalEvent, type JournalRow, formatReport, isJournalRow, journalKey, splitJournalKeys } from './journal.ts'
@@ -48,7 +48,8 @@ export {
   peerRecord,
   prune,
 } from './state.ts'
+export { SIMULATED, type SimulatedRule, simulate } from './simulate.ts'
 export { type Asking, USAGE, bandExpiry, bandLine, statusLine, statusLineExpiry, statusReport } from './status.ts'
 export { canonical, contextBucket, fingerprint } from './text.ts'
-export { type HeavyOutcome, type ToolRequest, resolveHeavyAsk, toolGate } from './tools.ts'
+export { type HeavyOutcome, type ToolRequest, isScheduling, resolveHeavyAsk, scheduleGate, toolGate } from './tools.ts'
 export { type Ask, type Deny, type Family, HEADER, type Rule, SIGNATURE, type Verdict } from './verdict.ts'

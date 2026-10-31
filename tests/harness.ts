@@ -25,6 +25,8 @@ export type WorldOptions = {
   toolResult?: (e: ToolEvent) => Record<string, unknown> | Promise<Record<string, unknown>>
   /** What `$.session.compact()` answers, such as `{ skip }` when a hook vetoes it. */
   compactResult?: () => Record<string, unknown>
+  /** The model a spawn reports it runs on when the call names none, as an agent's own definition picks. */
+  spawnModel?: string
   /** Runs inside every agent spawn before it answers, so a test can hold one while it starts. */
   onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
@@ -40,13 +42,14 @@ export type World = {
   statuses: Array<string | undefined>
   fills: string[]
   /** The input box's text: what fills put there, or what a test says Claude Code put back. */
-  draft: string
   submits: Array<Record<string, unknown>>
   compactions: number
   ran: string[]
   setContext(tokens: number | undefined): void
   /** The usage the next model request reports. */
   nextUsage: Record<string, number> | undefined
+  /** While true, the store refuses every write, as when it is full. */
+  storeFull: boolean
 }
 
 export function world(on: On, options: WorldOptions = {}): World {
@@ -63,7 +66,6 @@ export function world(on: On, options: WorldOptions = {}): World {
     logs: [],
     statuses: [],
     fills: [],
-    draft: '',
     submits: [],
     compactions: 0,
     ran: [],
@@ -71,10 +73,12 @@ export function world(on: On, options: WorldOptions = {}): World {
       contextTokens = tokens
     },
     nextUsage: undefined,
+    storeFull: false,
   }
 
   on('store.get', ($, e) => ({ value: structuredClone(store.get(e.key)) }))
   on('store.set', ($, e) => {
+    if (w.storeFull) throw new Error('the store would pass 4 MiB')
     store.set(e.key, structuredClone(e.value))
     return { value: undefined }
   })
@@ -102,10 +106,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('prompt.fill', ($, e) => {
     w.fills.push(e.text)
-    w.draft = e.text
     return { isFilled: true } as never
   })
-  on('prompt.read', () => ({ value: { text: w.draft, cursor: w.draft.length } }) as never)
   on('prompt.submit', ($, e) => {
     if (e.origin?.kind === 'plugin') w.submits.push(e as Record<string, unknown>)
     return { text: e.text, ...(e.context ? { context: e.context } : {}) }
@@ -130,7 +132,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   on('agent.spawn', async ($, e) => {
     const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
-    return { model: 'claude-test', agentId } as never
+    return { model: (e.model as string | undefined) ?? options.spawnModel ?? 'claude-test', agentId } as never
   })
   on('tool.call', async ($, e) => {
     if (e.tool === 'AskUserQuestion') {

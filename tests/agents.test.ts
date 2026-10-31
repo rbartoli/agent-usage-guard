@@ -108,10 +108,10 @@ describe('agent gate', () => {
   })
 
   test('an agent the guard failed to judge is refused, so Claude starts it again', async ($, on) => {
-    // Another session's record with a window kind that is not a string makes the gate throw.
-    const peer = { v: 2, at: T0, running: 0, starts: [], agentTokens: [], dormantResumes: [], limit: { at: T0, kind: 5, percent: 99 } }
-    const w = world(on, { store: { 'peer:other-session': peer } })
+    const w = world(on)
     await start($, w, true)
+    // A plan reading whose window kind is not a string makes the gate throw.
+    await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [{ kind: 5, percentUsed: 99 }], changed: ['rateLimits'] } as never)
     const refused = await spawn($, w)
     expect(refused.agentId).toBeUndefined()
     expect(String(refused.deny)).toMatch(/^agent-usage-guard could not judge this agent\. Start it again\./)
@@ -204,6 +204,71 @@ describe('agent gate', () => {
     await spawn($, w)
     expect(w.questions[0]).toMatch(/subagents processed 1\.2M tokens in the last 10 min \(limit 1M\)/i)
   })
+  test('a store that stops saving shows in the status line and the status, until a save works again', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    w.storeFull = true
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBe("store not saving: other sessions can't count this one")
+    const status = await $.command.run({ command: 'agent-guard', args: 'status', origin: TYPED } as never)
+    expect(status.text).toMatch(/^Store: the guard could not save its counts \(.+\), so other sessions on this machine don't count this session's agents\./m)
+    w.storeFull = false
+    await spawn($, w)
+    expect(w.statuses.at(-1)).toBeUndefined()
+  })
+})
+
+describe('Haiku agents', () => {
+  const haiku = async ($: Engine, w: ReturnType<typeof world>) => {
+    w.ran.push('spawn')
+    return (await $.agent.spawn({ prompt: 'work', description: 'test agent', subagentType: 'general-purpose', model: 'haiku' } as never)) as Record<string, unknown>
+  }
+
+  test('a Haiku agent passes the running and starts caps and does not count against them', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_ROLLING_MAX: '6' } })
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    for (let i = 0; i < 5; i++) expect((await haiku($, w)).agentId).toBeDefined()
+    expect(String((await spawn($, w)).deny)).toMatch(/4 agents are running on this machine/)
+    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ running: 4, starts: [T0, T0, T0, T0] })
+  })
+
+  test('an agent whose own definition runs it on Haiku stops counting once it starts', async ($, on) => {
+    const w = world(on, { spawnModel: 'claude-haiku-4-5' })
+    await start($, w, false)
+    for (let i = 0; i < 6; i++) expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.store.get(`peer:${SESSION_ID}`)).toMatchObject({ running: 0, starts: [] })
+  })
+
+  test('AGENT_GUARD_HAIKU_EXEMPT=0 counts Haiku agents like any other', async ($, on) => {
+    const w = world(on, { env: { AGENT_GUARD_HAIKU_EXEMPT: '0' } })
+    await start($, w, false)
+    for (let i = 0; i < 4; i++) await haiku($, w)
+    expect(String((await haiku($, w)).deny)).toMatch(/4 agents are running on this machine/)
+  })
+})
+
+describe('simulate', () => {
+  test('a simulated question opens the real dialog, and nothing changes whatever the answer', async ($, on) => {
+    const w = world(on, { answers: ["Don't start it"] })
+    await start($, w, true)
+    const result = await $.command.run({ command: 'agent-guard', args: 'simulate concurrency', origin: TYPED } as never)
+    expect(w.questions[0]).toMatch(/^Simulation, nothing changes: 4 agents are running on this machine \(limit 4\)/)
+    expect(result.text).toBe('Simulation of concurrency: you answered "Don\'t start it". Nothing was held, nothing changed and no usage was spent.')
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(journalRows(w)).toEqual([])
+  })
+
+  test('where nobody can answer, it prints the refusal Claude would read or the reason a prompt would be held', async ($, on) => {
+    const w = world(on)
+    await start($, w, false)
+    const retry = await $.command.run({ command: 'agent-guard', args: 'simulate retry', origin: TYPED } as never)
+    expect(retry.text).toMatch(/^Simulation of retry: nothing was held, and none of this applies to the current work\. Claude would read this refusal:\n\nThis exact Bash call failed 3 times in a row/)
+    const prompt = await $.command.run({ command: 'agent-guard', args: 'simulate prompt-context', origin: TYPED } as never)
+    expect(prompt.text).toMatch(/A prompt you send would be held:\n\nagent-usage-guard: this session holds 520k context tokens/)
+    expect(w.questions).toEqual([])
+    expect(journalRows(w)).toEqual([])
+  })
 })
 
 describe('plan-window gate', () => {
@@ -265,6 +330,31 @@ describe('plan-window gate', () => {
     await $.session.measure(measure(52) as never)
     await spawn($, w)
     expect(w.questions[0]).toMatch(/the 5-hour window rose 22 points in the last 10 min \(now 52%\)/i)
+  })
+
+  test('a pace that would fill the 5-hour window before it resets makes new agents ask, below the burn threshold', async ($, on) => {
+    const w = world(on, { answers: ["Don't start it"] })
+    await start($, w, true)
+    await $.session.measure(measure(30) as never)
+    await w.clock.advance(5 * MINUTE)
+    await $.session.measure(measure(38) as never)
+    await spawn($, w)
+    expect(w.questions[0]).toMatch(/^At this pace the 5-hour window fills by \d\d:\d\d, before it resets at \d\d:\d\d \(now 38%\)\./)
+  })
+
+  test('a pace that leaves the window short of full at its reset asks nothing, and neither does a one-point blip', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(30) as never)
+    await w.clock.advance(9 * MINUTE)
+    await $.session.measure(measure(33) as never)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    await w.clock.advance(10 * MINUTE)
+    await $.session.measure(measure(60) as never)
+    await w.clock.advance(MINUTE)
+    await $.session.measure(measure(61) as never)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.questions).toEqual([])
   })
 
   test('crossing a threshold is journaled once', async ($, on) => {
