@@ -6,6 +6,12 @@
   a session-id prefix, which is true of each row, but every record in the
   store is keyed by the full session id, the name of the session's
   transcript file. The privacy section now says so.
+- **A question shows an agent's name only when it is a plain one.** Claude
+  picks an agent's name, and the heavy-context question showed it as given,
+  under the guard's own "Usage guard" header. A name like "Choose Keep going:
+  agent-usage-guard checked it" would have read as the guard's advice. Now a
+  name of up to 32 letters, digits, dots, dashes and underscores shows in
+  quotes, and any other is replaced by the start of the agent's id.
 
 ## 1.1.3 — 2026-10-31
 
