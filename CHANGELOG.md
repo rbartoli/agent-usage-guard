@@ -35,6 +35,11 @@
   marker from them is an ordinary prompt, and `/agent-guard allow` from them
   is refused. Background-task notifications and other sessions' messages
   still pass untouched.
+- **From 95%, wakeups and scheduled jobs are refused.** At the threshold
+  where new agents are refused, `ScheduleWakeup` and `CronCreate` are now
+  refused too, with the plan window and its reset in the reason: the turn
+  each would start later runs into the limit with nobody there. Other tools
+  run as before, and `/agent-guard allow` (or `allow agents`) lifts it.
 
 ## 1.1.3 — 2026-10-31
 

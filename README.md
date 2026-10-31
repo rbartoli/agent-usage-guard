@@ -54,6 +54,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 |---|---|---|---|
 | Plan windows | New agents need approval once a window is this full | 80% | asks; approval lasts until that window resets |
 | | New agents are refused once a window is this full | 95% | refuses |
+| | `ScheduleWakeup` and `CronCreate` are refused once a window is this full, so no turn starts itself into the limit | 95% | refuses |
 | | Each session is told once to finish its step and say what is left | 95% | adds a note to the next prompt |
 | | New agents need approval when the 5-hour window rises this fast | 20 points / 10 min | asks |
 | Agents | Agents running at once, across every session on this machine | 4 | asks |
@@ -150,7 +151,7 @@ Set these as environment variables, or under `env` in `~/.claude/settings.json`.
 | `AGENT_GUARD_AGENT_TOKENS_MAX` | Subagent tokens per window on this machine (`10000000`) |
 | `AGENT_GUARD_DEPTH_MAX` | Agent layers below the main conversation (`1`) |
 | `AGENT_GUARD_LIMIT_ASK_PERCENT` | Plan-window percentage from which new agents ask (`80`) |
-| `AGENT_GUARD_LIMIT_DENY_PERCENT` | Plan-window percentage from which new agents are refused and each session is told to wind down (`95`) |
+| `AGENT_GUARD_LIMIT_DENY_PERCENT` | Plan-window percentage from which new agents, wakeups and scheduled jobs are refused and each session is told to wind down (`95`) |
 | `AGENT_GUARD_BURN_PERCENT` | 5-hour-window points per window that make new agents ask (`20`) |
 | `AGENT_GUARD_CONTEXT_WARN` | Context at which Claude is told once to keep the turn bounded (`300000`) |
 | `AGENT_GUARD_CONTEXT_HARD` | Context at which a prompt asks before it is sent (`500000`) |

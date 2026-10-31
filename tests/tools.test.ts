@@ -176,3 +176,34 @@ describe('a Stop hook that reopens the turn', () => {
     expect(String(second.deny)).toMatch(/A Stop hook reopened this turn, so ending the turn will not clear this\. Tell the user/)
   })
 })
+
+describe('scheduled work near the limit', () => {
+  const measure = (percent: number) => ({
+    context: { window: 1_000_000 },
+    rateLimits: [{ kind: 'five_hour', percentUsed: percent, resetsAt: '2027-01-15T15:00:00.000Z' }],
+    changed: ['rateLimits'],
+  })
+
+  test('from 95% a wakeup or a scheduled job is refused, and other tools still run', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(96) as never)
+    const wakeup = await $.tool.call({ tool: 'ScheduleWakeup', delaySeconds: 1200, prompt: 'check CI' } as never)
+    expect(String((wakeup as Record<string, unknown>).deny)).toMatch(/^This ScheduleWakeup call was refused: the 5-hour window is 96% used \(resets \d\d:\d\d\), and the turn it starts would run into the limit\./)
+    const cron = await $.tool.call({ tool: 'CronCreate', cron: '*/5 * * * *', prompt: 'check CI' } as never)
+    expect(String((cron as Record<string, unknown>).deny)).toMatch(/^This CronCreate call was refused/)
+    expect(await $.tool.call({ tool: 'Read', file_path: '/a' } as never)).toEqual({ result: 'ok' })
+    expect(w.ran).toEqual(['Read'])
+    expect(journalRows(w).filter((r) => r.ev === 'deny').map((r) => r.rule)).toEqual(['schedule', 'schedule'])
+  })
+
+  test('below 95% it runs, and /agent-guard allow lifts the hold', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(90) as never)
+    expect(await $.tool.call({ tool: 'ScheduleWakeup', delaySeconds: 1200, prompt: 'x' } as never)).toEqual({ result: 'ok' })
+    await $.session.measure(measure(97) as never)
+    await $.command.run({ command: 'agent-guard', args: 'allow agents', origin: { kind: 'composer' } } as never)
+    expect(await $.tool.call({ tool: 'CronCreate', cron: '0 9 * * *', prompt: 'x' } as never)).toEqual({ result: 'ok' })
+  })
+})

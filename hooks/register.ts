@@ -31,6 +31,7 @@ import {
   helpText,
   highestLimit,
   isJournalRow,
+  isScheduling,
   journalKey,
   livePeers,
   lockoutKind,
@@ -59,6 +60,7 @@ import {
   resolveHeavyAsk,
   resolvePromptAsk,
   resumeGuard,
+  scheduleGate,
   splitJournalKeys,
   statusLine,
   statusLineExpiry,
@@ -379,7 +381,9 @@ export function register(on: On): void {
     if (!resumed) {
       const label = loop === MAIN ? 'this conversation' : agentLabel(loop)
       const request = { loop, tool: e.tool, fingerprint: print, label }
-      let verdict = toolGate(session, config, now, request)
+      if (isScheduling(e.tool)) await loadPeers($, now)
+      let verdict = scheduleGate(session, peers, config, now, request)
+      if (verdict.kind === 'allow') verdict = toolGate(session, config, now, request)
       if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
       if (verdict.kind === 'deny') {
         await journalDenial($, verdict, e.tool, contextBucket(session.loops[loop]?.context))
