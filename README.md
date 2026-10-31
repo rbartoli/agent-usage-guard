@@ -61,7 +61,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | Tokens processed by subagents per 10 minutes, across this machine | 10M | asks |
 | | Subagents may not start their own agents | depth 1 | refuses |
 | Context | Claude is told once to keep the turn bounded | 300k tokens | adds a note to the prompt |
-| | A prompt that would re-read this much context | 500k tokens | asks: compact then send, send anyway, or cancel |
+| | A prompt that would re-read this much context | 500k tokens | asks: compact first, send anyway, or cancel |
 | | Tool calls per 10 minutes while a conversation or agent carries this much | 20 calls at 400k | asks: keep going, compact after this turn, or stop |
 | | A heavy session idle long enough for its prompt cache to expire | 150k tokens, 1 h idle | asks before re-writing the cache |
 | Loops | The same tool call failing again and again, with no other call in between | 3 identical failures | refuses the identical retry |
@@ -126,7 +126,7 @@ A mod runs inside Claude Code with your permissions; read [what a mod can reach]
 
 - It makes no network requests and starts no processes. The only file it reads is its own `plugin.json`, for the version `/agent-guard status` shows.
 - It decides only what the rules above describe: whether an agent starts, a prompt is sent, or a tool call runs. It asks you whenever you can answer, and gives the reason when it refuses. It reads permission modes but never changes them, and it writes no settings.
-- The only prompt it submits is your own: after "Compact, then send", it sends the prompt you typed, unchanged, once compaction finishes.
+- It never submits a prompt or writes in the input box. After "Compact first", the prompt you typed waits there for you to send.
 - Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k or a plan window reaches 95%, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.
 - It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
