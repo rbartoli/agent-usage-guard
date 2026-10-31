@@ -40,6 +40,13 @@
   refused too, with the plan window and its reset in the reason: the turn
   each would start later runs into the limit with nobody there. Other tools
   run as before, and `/agent-guard allow` (or `allow agents`) lifts it.
+- **The burn rule looks at time to empty.** New agents asked only when the
+  5-hour window rose 20 points in 10 minutes. Now they also ask when the
+  window's pace over those 10 minutes would fill it before it resets: 30% to
+  38% in five minutes, three hours before the reset, fills it in about 40
+  minutes. The question says when: "At this pace the 5-hour window fills by
+  12:43, before it resets at 15:00 (now 38%)". A rise of under two points, or
+  over less than two minutes, projects nothing, since readings move in steps.
 
 ## 1.1.3 — 2026-10-31
 

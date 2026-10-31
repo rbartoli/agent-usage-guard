@@ -57,6 +57,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | `ScheduleWakeup` and `CronCreate` are refused once a window is this full, so no turn starts itself into the limit | 95% | refuses |
 | | Each session is told once to finish its step and say what is left | 95% | adds a note to the next prompt |
 | | New agents need approval when the 5-hour window rises this fast | 20 points / 10 min | asks |
+| | New agents need approval when the 5-hour window's pace over the last 10 minutes would fill it before it resets | at least 2 points over 2 min | asks |
 | Agents | Agents running at once, across every session on this machine | 4 | asks |
 | | Agents started or resumed per 10 minutes, across this machine | 12 | asks |
 | | Tokens processed by subagents per 10 minutes, across this machine | 10M | asks |
