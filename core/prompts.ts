@@ -20,7 +20,7 @@ export type PromptRequest = {
   idleMs?: number
 }
 
-const PROMPT_COMPACT = 'Compact, then send'
+const PROMPT_COMPACT = 'Compact first'
 const PROMPT_SEND = 'Send anyway'
 const PROMPT_CANCEL = 'Cancel'
 
@@ -76,16 +76,16 @@ export function promptGate(
   return withNotes(state, peers, config, now, context)
 }
 
-/** The user chose to compact first: drop the prompt, compact, then send it. */
-export type CompactThenSend = { kind: 'compact-then-send'; rule: Rule; message: string }
+/** The user chose to compact first: drop the prompt, which waits in the input box, and compact. */
+export type CompactFirst = { kind: 'compact-first'; rule: Rule; message: string }
 
-export type PromptOutcome = Allow | Drop | CompactThenSend
+export type PromptOutcome = Allow | Drop | CompactFirst
 
 /** Applies the user's answer to a prompt question. Dismissing it cancels. */
 export function resolvePromptAsk(state: SessionState, ask: Ask, answer: string | undefined): PromptOutcome {
   const trip = ask.trips[0]!
   if (answer === PROMPT_COMPACT) {
-    return { kind: 'compact-then-send', rule: trip.rule, message: `${SIGNATURE}: compacting first, because ${trip.detail}; your prompt is sent once that finishes.` }
+    return { kind: 'compact-first', rule: trip.rule, message: `${SIGNATURE}: compacting first, because ${trip.detail}; your prompt is back in the input box, to send once that finishes.` }
   }
   if (answer === PROMPT_SEND) {
     if (trip.rule === 'prompt-context') state.leases['prompt-context'] = Number.MAX_SAFE_INTEGER
