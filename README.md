@@ -62,7 +62,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | Tokens processed by subagents per 10 minutes, across this machine | 10M | asks |
 | | Subagents may not start their own agents | depth 1 | refuses |
 | Context | Claude is told once to keep the turn bounded | 300k tokens | adds a note to the prompt |
-| | A prompt that would re-read this much context | 500k tokens | asks: compact then send, send anyway, or cancel |
+| | A prompt that would re-read this much context | 500k tokens | asks: compact first, send anyway, or cancel |
 | | Tool calls per 10 minutes while a conversation or agent carries this much | 20 calls at 400k | asks: keep going, compact after this turn, or stop |
 | | A heavy session idle long enough for its prompt cache to expire | 150k tokens, 1 h idle | asks before re-writing the cache |
 | Loops | The same tool call failing again and again, with no other call in between | 3 identical failures | refuses the identical retry |
@@ -72,11 +72,13 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 **When it asks.** The question appears in Claude Code's own dialog, the one Claude uses to ask you something, and the call waits for your answer. Agents started in parallel while it is open are held back, and Claude starts them again once you answer. If you allow it, that condition stays allowed for a while: a plan window until it resets, a heavy context until it shrinks (for tool calls, an hour at most), the agent counts for 10 minutes. If you decline or dismiss the question, or it closes without an answer for any other reason, Claude is told not to start agents for the next 10 minutes (`AGENT_GUARD_WINDOW_SECONDS`), and is not asked again in that time. Typed words reach Claude, so you can answer "use haiku agents instead".
 
-**When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
+**When nobody can answer.** In `claude -p`, the Agent SDK and `dontAsk` mode, an agent or tool gate refuses instead of asking. A heavy prompt is held with the reason, and so is a dormant heavy resume once the machine-wide cap of one per 10 minutes is reached. Prompts that start a turn on their own, such as a schedule or `/loop` firing, a message relayed from a channel like Slack, or a Slack ping, are held the same way, even in a session someone could be asked in; they never lift limits. Claude reads each refusal as the tool's result. Repeat refusals of the same condition are worded differently each time and escalate: the second says nothing has changed and to try something else, the third says to end the turn. If a Stop hook such as `/goal` keeps reopening the turn, the refusal says the user has to decide.
 
 **What it leaves alone.** It never holds a background task's notification or another session's message, because that would lose the result. It no longer blocks prompts after a usage limit: since v2.1.234, Claude Code waits at a limit and continues at reset on its own (`autoContinueAtUsageLimit`). The guard's job is to keep you from reaching the limit, and its journal counts the lockouts it did not prevent. Near the limit it only adds a note: from 95%, each session's next prompt tells Claude to finish the step in progress, start nothing large, and end the turn with what is done and what is left, so a lockout finds every session at a clean stop.
 
-**Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and other non-terminal sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
+**Idle compaction.** Since v2.1.299, Claude Code compacts a conversation of 200k tokens or more that sits idle for about 54 minutes, before its one-hour prompt cache expires (`idleCompaction`, on by default). The guard reads the compacted size, so it does not ask about that session. Since v2.1.314 it also runs in VS Code and Claude Desktop's Code tab, for subscribers with telemetry turned off, and on Bedrock, Vertex, Foundry and LLM gateways once the one-hour prompt cache is on. Its dormant question covers what idle compaction leaves out: conversations from 150k to 200k tokens, `claude -p` and SDK sessions, a machine that was asleep at the 54-minute mark, and setups with idle compaction or auto-compaction turned off.
+
+**Claude Code's own resume warning.** Since v2.1.304, on Pro and Max plans, Claude Code warns before resuming an inactive conversation, or sending to one whose cache went cold while idle, when that would use a noticeable share of your 5-hour limit: you resume anyway or start a new conversation. It shows only from a minimum share, which Anthropic sets per plan and model, so for most models it shows only on very large conversations. The guard's dormant question asks from 150k tokens, so it still covers most cold resumes, and on the largest you may see both.
 
 ## Commands
 
@@ -93,7 +95,7 @@ Agents covers subagents, agent-team teammates, workflow agents, and finished sub
 
 ## What it can and cannot see
 
-Checked against Claude Code v2.1.295:
+Checked against Claude Code v2.1.316:
 
 | Path | Coverage |
 |---|---|
@@ -109,7 +111,7 @@ Checked against Claude Code v2.1.295:
 
 Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p` and the Agent SDK. They don't run in a Desktop-app WSL session ([where mods run](https://code.claude.com/docs/en/plugins/mods/overview#where-mods-run)).
 
-**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). It has no limit on the total number of agents a session starts. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
+**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). It has no limit on the total number of agents a session starts. Since v2.1.316, `CLAUDE_CODE_SUBAGENT_EFFORT` sets the effort subagents run at when nothing else names one, instead of the session's: a lower one makes each agent cheaper, and the guard still limits how many run. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
 
 ## See what it did
 
@@ -125,9 +127,9 @@ A mod runs inside Claude Code with your permissions; read [what a mod can reach]
 
 - It makes no network requests and starts no processes. The only file it reads is its own `plugin.json`, for the version `/agent-guard status` shows.
 - It decides only what the rules above describe: whether an agent starts, a prompt is sent, or a tool call runs. It asks you whenever you can answer, and gives the reason when it refuses. It reads permission modes but never changes them, and it writes no settings.
-- The only prompt it submits is your own: after "Compact, then send", it sends the prompt you typed, unchanged, once compaction finishes.
+- It never submits a prompt or writes in the input box. After "Compact first", the prompt you typed waits there for you to send.
 - Its prompt hook passes your prompt on unchanged, adds a one-time note for Claude when the context passes 300k or a plan window reaches 95%, or holds the prompt to ask you first (when nobody can answer, it says why instead). Its `SessionStart` hook changes nothing.
-- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer).
+- It keeps its state in the mod store, a JSON file under `~/.claude/plugins/store/`. Each session writes its own counts (running agents, recent starts and dormant resumes, subagent tokens per minute, its latest 5-hour reading), when it was last active (kept 30 days, so a resumed session knows how long it sat idle), and its journal rows (time, a session-id prefix, rule, tool name, context bucket such as `400-500k`, plan window and percentage, refusal number, and your answer). Each record is stored under the session's full id, which is also the name of that session's transcript file. If the store stops saving, such as when it is full, the status line says so: other sessions then stop counting this one.
 - It never stores prompt text, tool inputs, error text or model output. A tool call is reduced to a 13-character fingerprint. Agent names stay in memory and are never written.
 - Journal days older than 90 days are deleted (`AGENT_GUARD_JOURNAL_DAYS`).
 - `demo/`, which builds the GIF above, is not part of what runs. It starts Claude Code in a temporary home directory with a made-up API key for a scripted local API, and reads none of your credentials.
