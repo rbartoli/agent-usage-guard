@@ -38,7 +38,7 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 
 | Surface | Evidence |
 |---|---|
-| Agent limits | Concurrency, rolling starts and subagent tokens; a finished agent frees its slot, one in a long tool call keeps it, and one that went quiet counts again at its next request; peers' counts add up, their tokens age out with the window, and stale records expire; a parallel batch of five lets exactly four through; nesting refused; resumes by `SendMessage` gated and counted once, also when Claude Code raises `agent.spawn` for them; a resume through `agent.spawn` alone gated as a resume; `/subtask` forks counted, even while a gated agent is starting, internal agents not |
+| Agent limits | Concurrency, rolling starts and subagent tokens; a finished agent frees its slot, one in a long tool call keeps it, and one that went quiet counts again at its next request; peers' counts add up, their tokens age out with the window, and stale or malformed records expire or are ignored; a parallel batch of five lets exactly four through; nesting refused; resumes by `SendMessage` gated and counted once, also when Claude Code raises `agent.spawn` for them; a resume through `agent.spawn` alone gated as a resume; `/subtask` forks counted, even while a gated agent is starting, internal agents not |
 | Plan windows | Refused from 95%, asked once from 80% with the approval lasting to reset; weekly window; expired windows ignored; burn rate; threshold crossings journaled once |
 | Questions | Approval leases the condition; declining refuses without asking again; typed answers reach the model; a question that ends without an answer, however it ends, counts as dismissed and never as a yes; an agent the guard failed to judge is refused; calls made while a question is open are held back without waiting, and run once it is answered |
 | Tool gate | Retry fuse on identical failures in a row only, so test, edit, re-run is not a loop; a permission refusal is not a failure; the heavy-context budget asks once, stops the turn, or compacts after it; subagents judged on their own context, and named in a question only by a plain name; `SubagentHandback` and `TaskStop` never held; compaction, or a context reading below the threshold, clears the budget |
@@ -46,7 +46,7 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 | Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
 | Overrides | `/agent-guard allow`, `resume`, the old markers sent alone, and the off switch; `allow` and `pause` refused when another plugin runs them |
 | Status line | Redrawn when a plan window it shows resets or an allow ends, in a session where nothing else happens |
-| Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; each locked window counted once, across sessions and retries; report across sessions; retention and stale-record cleanup; rows hold no prompt text |
+| Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; each locked window counted once, across sessions and retries; report across sessions, from rows that hold only the values the guard writes; retention and stale-record cleanup; rows hold no prompt text |
 
 ## What is checked by hand
 
