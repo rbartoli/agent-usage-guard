@@ -108,10 +108,10 @@ describe('agent gate', () => {
   })
 
   test('an agent the guard failed to judge is refused, so Claude starts it again', async ($, on) => {
-    // Another session's record with a window kind that is not a string makes the gate throw.
-    const peer = { v: 2, at: T0, running: 0, starts: [], agentTokens: [], dormantResumes: [], limit: { at: T0, kind: 5, percent: 99 } }
-    const w = world(on, { store: { 'peer:other-session': peer } })
+    const w = world(on)
     await start($, w, true)
+    // A plan reading whose window kind is not a string makes the gate throw.
+    await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [{ kind: 5, percentUsed: 99 }], changed: ['rateLimits'] } as never)
     const refused = await spawn($, w)
     expect(refused.agentId).toBeUndefined()
     expect(String(refused.deny)).toMatch(/^agent-usage-guard could not judge this agent\. Start it again\./)

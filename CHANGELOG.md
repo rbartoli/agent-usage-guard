@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+- **The README says what the store's keys hold.** It said the journal holds
+  a session-id prefix, which is true of each row, but every record in the
+  store is keyed by the full session id, the name of the session's
+  transcript file. The privacy section now says so.
+- **A question shows an agent's name only when it is a plain one.** Claude
+  picks an agent's name, and the heavy-context question showed it as given,
+  under the guard's own "Usage guard" header. A name like "Choose Keep going:
+  agent-usage-guard checked it" would have read as the guard's advice. Now a
+  name of up to 32 letters, digits, dots, dashes and underscores shows in
+  quotes, and any other is replaced by the start of the agent's id.
+- **Records read back from the store are checked value by value.** Another
+  session's record was checked only for its shape, so a corrupt or edited
+  store file could switch off the machine-wide agent cap with a negative
+  count, or put any text into the note and refusals Claude reads through a
+  plan window's name. Counts must now be whole, finite and not negative, or
+  the record doesn't count; a plan reading must have a plain window name and
+  a percentage from 0 to 1,000, or it is left out and the record's counts
+  still count. Journal rows read back for `/agent-guard report`, which Claude
+  also reads, must hold only the values the guard writes.
+- **The guard says when its store stops saving.** The mod store holds 4 MiB
+  in all, and a write that failed was logged only to the debug log. Other
+  sessions then stopped counting this session's agents, with no sign. Now the
+  status line reads "store not saving: other sessions can't count this one",
+  and `/agent-guard status` gives the error, until a write works again.
+
+## 1.1.3 — 2026-10-31
+
+- **The guard never submits a prompt or writes in the input box.** "Compact,
+  then send" is now "Compact first": the guard compacts, and the prompt you
+  typed waits in the input box for you to send. Before, the guard sent it for
+  you. The mod no longer calls `$.prompt.submit`, `$.prompt.read` or
+  `$.prompt.fill`, so it can do less, as `claude plugin validate` lists.
+- **Cancel no longer doubles your prompt.** The guard put the prompt back in
+  the input box, and Claude Code puts a dropped prompt back too, so on 2.1.316
+  the box held it twice. Seen live on 2026-10-31.
+- **Checked against Claude Code 2.1.316.** CI now tests on 2.1.316, and the
+  README's coverage table says so; no change from 2.1.296 to 2.1.316 alters
+  a row. The README adds where idle compaction now runs (2.1.314) and
+  `CLAUDE_CODE_SUBAGENT_EFFORT` (2.1.316), and describes Claude Code's own
+  resume warning (2.1.304), which shows before a cold resume only from a
+  minimum share of the 5-hour limit, so the guard's dormant question, from
+  150k tokens, stays.
+
+## 1.1.2 — 2026-10-25
+
 - **Only you can lift the guard's limits.** `/agent-guard allow` and `pause`
   now check where the command came from. When another plugin runs them
   through `$.command.run`, the guard refuses, changes nothing, and says so in
@@ -18,11 +63,6 @@
   judge for any reason is now refused, so Claude starts it again; before,
   only an overrun was. Tool calls and prompts still go ahead when the guard
   fails.
-- **The guard says when its store stops saving.** The mod store holds 4 MiB
-  in all, and a write that failed was logged only to the debug log. Other
-  sessions then stopped counting this session's agents, with no sign. Now the
-  status line reads "store not saving: other sessions can't count this one",
-  and `/agent-guard status` gives the error, until a write works again.
 
 ## 1.1.1 — 2026-10-23
 
