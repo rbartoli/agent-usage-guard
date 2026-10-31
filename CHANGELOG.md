@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 1.1.3 — 2026-10-31
+
+- **The guard never submits a prompt or writes in the input box.** "Compact,
+  then send" is now "Compact first": the guard compacts, and the prompt you
+  typed waits in the input box for you to send. Before, the guard sent it for
+  you. The mod no longer calls `$.prompt.submit`, `$.prompt.read` or
+  `$.prompt.fill`, so it can do less, as `claude plugin validate` lists.
+- **Cancel no longer doubles your prompt.** The guard put the prompt back in
+  the input box, and Claude Code puts a dropped prompt back too, so on 2.1.316
+  the box held it twice. Seen live on 2026-10-31.
+- **Checked against Claude Code 2.1.316.** CI now tests on 2.1.316, and the
+  README's coverage table says so; no change from 2.1.296 to 2.1.316 alters
+  a row. The README adds where idle compaction now runs (2.1.314) and
+  `CLAUDE_CODE_SUBAGENT_EFFORT` (2.1.316), and describes Claude Code's own
+  resume warning (2.1.304), which shows before a cold resume only from a
+  minimum share of the 5-hour limit, so the guard's dormant question, from
+  150k tokens, stays.
+
+## 1.1.2 — 2026-10-25
 
 - **Only you can lift the guard's limits.** `/agent-guard allow` and `pause`
   now check where the command came from. When another plugin runs them
