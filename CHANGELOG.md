@@ -61,9 +61,9 @@
   reason a prompt would be held. Nothing is held, nothing in the session
   changes, the journal records nothing, and no usage is spent. The rules are
   `concurrency`, `starts`, `agent-tokens`, `burn`, `limit`, `limit-deny`,
-  `depth`, `retry`, `tool-budget`, `prompt-context` and `dormant`. The
-  README's install steps now end with one, so a new user sees the guard ask
-  within a minute.
+  `schedule`, `depth`, `retry`, `tool-budget`, `prompt-context` and `dormant`.
+  The README's install steps now end with one, so a new user sees the guard
+  ask within a minute.
 
 ## 1.1.3 — 2026-10-31
 

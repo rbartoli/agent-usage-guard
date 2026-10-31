@@ -5,7 +5,7 @@ import { type AgentRequest, agentGate } from './agents.ts'
 import type { Config } from './config.ts'
 import { promptGate } from './prompts.ts'
 import { type LimitReading, MAIN, loopOf, newSession } from './state.ts'
-import { toolGate } from './tools.ts'
+import { scheduleGate, toolGate } from './tools.ts'
 import type { Verdict } from './verdict.ts'
 
 export const SIMULATED = [
@@ -15,6 +15,7 @@ export const SIMULATED = [
   'burn',
   'limit',
   'limit-deny',
+  'schedule',
   'depth',
   'retry',
   'tool-budget',
@@ -57,6 +58,9 @@ export function simulate(rule: SimulatedRule, config: Config, now: number, canAs
     case 'limit-deny':
       state.limits.five_hour = fiveHour(config.limitDenyPercent)
       return agentGate(state, [], config, now, agent)
+    case 'schedule':
+      state.limits.five_hour = fiveHour(config.limitDenyPercent)
+      return scheduleGate(state, [], config, now, { loop: MAIN, tool: 'ScheduleWakeup', fingerprint: 'simulated', label: 'this conversation' })
     case 'depth':
       return agentGate(state, [], config, now, { ...agent, depth: config.depthMax + 1 })
     case 'retry':
