@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The README says what the store's keys hold.** It said the journal holds
+  a session-id prefix, which is true of each row, but every record in the
+  store is keyed by the full session id, the name of the session's
+  transcript file. The privacy section now says so.
+
 ## 1.1.3 — 2026-10-31
 
 - **The guard never submits a prompt or writes in the input box.** "Compact,
