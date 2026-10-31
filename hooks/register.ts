@@ -17,6 +17,7 @@ import {
   type PromptSource,
   SIGNATURE,
   type SessionState,
+  type SimulatedRule,
   type ToolRequest,
   type Verdict,
   agentGate,
@@ -62,6 +63,7 @@ import {
   resolvePromptAsk,
   resumeGuard,
   scheduleGate,
+  simulate,
   splitJournalKeys,
   statusLine,
   statusLineExpiry,
@@ -432,6 +434,7 @@ export function register(on: On): void {
       await refreshStatus($)
       return { text }
     }
+    if (command.action === 'simulate') return { text: await simulation($, command.rule, now) }
     if (command.action === 'resume') {
       const text = resumeGuard(session)
       await refreshStatus($)
@@ -707,6 +710,31 @@ async function oneAtATime<T>(key: string, held: () => T, run: () => Promise<T>):
   } finally {
     pending.delete(key)
   }
+}
+
+/**
+ * Shows what a rule does on made-up state: the real question in the dialog
+ * where someone can answer, else the refusal or the held prompt's reason. The
+ * reply opens by saying it is a simulation, because Claude reads it too.
+ */
+async function simulation($: Api, rule: SimulatedRule, now: number): Promise<string> {
+  const verdict = simulate(rule, config, now, canAsk())
+  const opening = `Simulation of ${rule}`
+  const aside = `${opening}: nothing was held, and none of this applies to the current work.`
+  if (verdict.kind === 'ask') {
+    if (canAsk()) {
+      try {
+        const answer = await $.ui.ask(`Simulation, nothing changes: ${verdict.question}`, { options: verdict.options, header: HEADER })
+        return `${opening}: you answered "${answer}". Nothing was held, nothing changed and no usage was spent.`
+      } catch {
+        // Dismissed, or the dialog could not open: show the question instead.
+      }
+    }
+    return `${aside} The guard would ask:\n\n${verdict.question}\nOptions: ${verdict.options.join(' · ')}`
+  }
+  if (verdict.kind === 'deny') return `${aside} Claude would read this refusal:\n\n${verdict.message}`
+  if (verdict.kind === 'drop') return `${aside} A prompt you send would be held:\n\n${verdict.message}`
+  return `${opening}: with your settings, this rule would not trip.`
 }
 
 /** Compacts the conversation. Returns why it did not, or undefined once it has. */

@@ -54,6 +54,16 @@
   one whose own definition picks Haiku stops counting once it starts. Haiku
   agents still count toward the subagent token budget and every plan-window
   rule. `AGENT_GUARD_HAIKU_EXEMPT=0` counts them like any other.
+- **`/agent-guard simulate <rule>` shows what a rule does.** It builds a
+  made-up state that trips the rule and runs the real gate on it. Where
+  someone can answer, the real question opens in Claude Code's dialog, marked
+  as a simulation; elsewhere it prints the refusal Claude would read or the
+  reason a prompt would be held. Nothing is held, nothing in the session
+  changes, the journal records nothing, and no usage is spent. The rules are
+  `concurrency`, `starts`, `agent-tokens`, `burn`, `limit`, `limit-deny`,
+  `schedule`, `depth`, `retry`, `tool-budget`, `prompt-context` and `dormant`.
+  The README's install steps now end with one, so a new user sees the guard
+  ask within a minute.
 
 ## 1.1.3 — 2026-10-31
 
