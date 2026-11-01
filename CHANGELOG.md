@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **"Compact, then send" sends your prompt again.** 1.1.3 turned it into
+  "Compact first", which left the prompt in the input box to send by hand, so
+  a session sat idle after compacting until you came back. The guard again
+  takes the prompt out of the box, compacts, and sends it as you typed it; if
+  compaction fails, it puts the prompt back ahead of anything typed since. A
+  prompt with an image or an @ mention now stays in the box for you to send:
+  Claude Code doesn't expand either in a prompt a mod sends, so 1.1.2's resend
+  dropped them without a word. The guard can't hold a prompt in its hook
+  until compaction ends, as Claude Code refuses a compaction started from a
+  prompt hook. Checked on Claude Code 2.1.316.
+- **A compaction that fails names the reason once.** The line read
+  "agent-usage-guard: agent-usage-guard could not compact (agent-usage-guard:
+  $.session.compact: Error during compaction: …)"; it now reads
+  "agent-usage-guard: could not compact (…)".
 - **The README says what the store's keys hold.** It said the journal holds
   a session-id prefix, which is true of each row, but every record in the
   store is keyed by the full session id, the name of the session's

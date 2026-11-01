@@ -16,40 +16,89 @@ describe('heavy prompt', () => {
       context: [expect.stringMatching(/^agent-usage-guard: this session's context is 520k tokens\. Keep this turn bounded/)],
     })
     expect(w.questions[0]).toBe('This session holds 520k context tokens, and sending re-reads all of them; compacting first shrinks this request and every later one. Send this prompt?')
-    expect(w.options[0]).toEqual(['Compact first', 'Send anyway', 'Cancel'])
+    expect(w.options[0]).toEqual(['Compact, then send', 'Send anyway', 'Cancel'])
     expect(await $.prompt.submit(typed('and another'))).toEqual({ text: 'and another' })
     expect(w.questions).toHaveLength(1)
   })
 
-  test('compact first drops the prompt and compacts, and never sends or rewrites it', async ($, on) => {
-    const w = world(on, { answers: ['Compact first'], contextTokens: 520_000 })
+  test('compact, then send drops the prompt, compacts, and sends it as the user\'s own', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
     await start($, w, true)
     const result = (await $.prompt.submit(typed('next step'))) as Record<string, unknown>
     expect(result.drop).toBe(
-      'agent-usage-guard: compacting first, because this session holds 520k context tokens (limit 500k), and sending re-reads all of them; your prompt is back in the input box, to send once that finishes.',
+      'agent-usage-guard: compacting first, because this session holds 520k context tokens (limit 500k), and sending re-reads all of them; your prompt is sent once that finishes.',
     )
     await w.clock.settle()
     expect(w.compactions).toBe(1)
-    expect(w.submits).toEqual([])
-    expect(w.fills).toEqual([])
+    expect(w.submits).toEqual([expect.objectContaining({ text: 'next step', origin: expect.objectContaining({ kind: 'plugin', asUser: true }) })])
     expect(journalRows(w).filter((r) => r.ev === 'answer')).toEqual([expect.objectContaining({ rule: 'prompt-context', answer: 'compact' })])
   })
 
-  test('a compaction a hook vetoes says so and leaves the prompt to the user', async ($, on) => {
-    const w = world(on, { answers: ['Compact first'], contextTokens: 520_000, compactResult: () => ({ skip: 'a PreCompact hook blocked it' }) })
+  test('compact, then send takes the dropped prompt back out of the input box before sending it', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step' // Claude Code puts a dropped prompt back in the input box
+    await w.clock.settle()
+    expect(w.draft).toBe('')
+    expect(w.submits).toHaveLength(1)
+  })
+
+  test('compact, then send takes the prompt back out when Claude Code puts it back late', async ($, on) => {
+    const w = world(on, {
+      answers: ['Compact, then send'],
+      contextTokens: 520_000,
+      compactResult: () => {
+        w.draft = 'merge' // the put-back lands after the guard first looked
+        return { messages: [{ role: 'user', text: 'summary', toolUses: [] }], tokensBefore: 0, tokensAfter: 0 }
+      },
+    })
+    await start($, w, true)
+    await $.prompt.submit(typed('merge'))
+    await w.clock.settle()
+    expect(w.draft).toBe('')
+    expect(w.submits).toHaveLength(1)
+  })
+
+  test('compact, then send leaves a different draft in the input box', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    await $.prompt.submit(typed('next step'))
+    w.draft = 'next step, and add tests'
+    await w.clock.settle()
+    expect(w.draft).toBe('next step, and add tests')
+  })
+
+  test('a prompt with an image or an @ mention is compacted for, then left in the input box, as a resend would drop them', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send', 'Compact, then send'], contextTokens: 520_000 })
+    await start($, w, true)
+    const image = { text: 'what is wrong here? [Image #1]', attachments: [{ type: 'image', id: 'img-1' }], origin: { kind: 'composer' }, wait: false } as never
+    for (const prompt of [image, typed('fix the typo in @README.md')]) {
+      const result = (await $.prompt.submit(prompt)) as Record<string, unknown>
+      expect(result.drop).toMatch(/; your prompt is back in the input box, to send once that finishes, as sending it for you would drop its images and @ mentions\.$/)
+    }
+    await w.clock.settle()
+    expect(w.compactions).toBe(2)
+    expect(w.submits).toEqual([])
+    expect(w.fills).toEqual([])
+  })
+
+  test('a compaction a hook vetoes puts the prompt back instead of sending it at full size', async ($, on) => {
+    const w = world(on, { answers: ['Compact, then send'], contextTokens: 520_000, compactResult: () => ({ skip: 'a PreCompact hook blocked it' }) })
     await start($, w, true)
     await $.prompt.submit(typed('next step'))
     await w.clock.settle()
     expect(w.submits).toEqual([])
-    expect(w.fills).toEqual([])
-    expect(w.logs).toContainEqual('agent-usage-guard could not compact (a PreCompact hook blocked it); your prompt is still in the input box.')
+    expect(w.fills).toEqual(['next step'])
+    expect(w.logs).toContainEqual('could not compact (a PreCompact hook blocked it), so your prompt is back in the input box.')
   })
 
-  test('a compaction that fails says so too', async ($, on) => {
+  test('a compaction that fails puts the prompt back too, ahead of anything typed meanwhile', async ($, on) => {
     const w = world(on, {
-      answers: ['Compact first'],
+      answers: ['Compact, then send'],
       contextTokens: 520_000,
       compactResult: () => {
+        w.draft = 'and then'
         throw new Error('the summary request failed')
       },
     })
@@ -57,7 +106,9 @@ describe('heavy prompt', () => {
     await $.prompt.submit(typed('next step'))
     await w.clock.settle()
     expect(w.submits).toEqual([])
-    expect(w.logs).toContainEqual(expect.stringMatching(/^agent-usage-guard could not compact \(.+\); your prompt is still in the input box\.$/))
+    expect(w.draft).toBe('next step\nand then')
+    // The test kit words the failure its own way.
+    expect(w.logs).toContainEqual(expect.stringMatching(/^could not compact \(.+\), so your prompt is back in the input box\.$/))
   })
 
   test('cancel leaves the prompt for Claude Code to put back, so it is not doubled', async ($, on) => {
