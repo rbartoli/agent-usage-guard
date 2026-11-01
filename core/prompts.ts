@@ -20,7 +20,7 @@ export type PromptRequest = {
   idleMs?: number
 }
 
-const PROMPT_COMPACT = 'Compact first'
+const PROMPT_COMPACT = 'Compact, then send'
 const PROMPT_SEND = 'Send anyway'
 const PROMPT_CANCEL = 'Cancel'
 
@@ -76,16 +76,22 @@ export function promptGate(
   return withNotes(state, peers, config, now, context)
 }
 
-/** The user chose to compact first: drop the prompt, which waits in the input box, and compact. */
-export type CompactFirst = { kind: 'compact-first'; rule: Rule; message: string }
+/** The user chose to compact first: drop the prompt, compact, then send it, or leave it in the input box when `resend` is false. */
+export type CompactThenSend = { kind: 'compact-then-send'; rule: Rule; message: string; resend: boolean }
 
-export type PromptOutcome = Allow | Drop | CompactFirst
+export type PromptOutcome = Allow | Drop | CompactThenSend
 
-/** Applies the user's answer to a prompt question. Dismissing it cancels. */
-export function resolvePromptAsk(state: SessionState, ask: Ask, answer: string | undefined): PromptOutcome {
+/**
+ * Applies the user's answer to a prompt question. Dismissing it cancels.
+ * `resendable` is false for a prompt that sending it again would change.
+ */
+export function resolvePromptAsk(state: SessionState, ask: Ask, answer: string | undefined, resendable: boolean): PromptOutcome {
   const trip = ask.trips[0]!
   if (answer === PROMPT_COMPACT) {
-    return { kind: 'compact-first', rule: trip.rule, message: `${SIGNATURE}: compacting first, because ${trip.detail}; your prompt is back in the input box, to send once that finishes.` }
+    const then = resendable
+      ? 'your prompt is sent once that finishes'
+      : 'your prompt is back in the input box, to send once that finishes, as sending it for you would drop its images and @ mentions'
+    return { kind: 'compact-then-send', rule: trip.rule, message: `${SIGNATURE}: compacting first, because ${trip.detail}; ${then}.`, resend: resendable }
   }
   if (answer === PROMPT_SEND) {
     if (trip.rule === 'prompt-context') state.leases['prompt-context'] = Number.MAX_SAFE_INTEGER

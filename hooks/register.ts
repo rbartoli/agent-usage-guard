@@ -265,7 +265,7 @@ export function register(on: On): void {
       compactAfterTurn = false
       $.clock.after(0, async () => {
         const failed = await compact($)
-        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}).`)
+        if (failed !== undefined) $.ui.log(`could not compact (${failed}).`)
       })
     }
     await refreshStatus($)
@@ -318,16 +318,11 @@ export function register(on: On): void {
       if (alone.kind === 'drop') return { drop: alone.message }
       return send(alone.kind === 'allow' ? alone.note : undefined)
     }
-    const outcome = resolvePromptAsk(session, verdict, asked.answer)
-    await journalAnswer($, verdict, asked, outcome.kind === 'compact-first' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
+    const outcome = resolvePromptAsk(session, verdict, asked.answer, resendable(e))
+    await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
     if (outcome.kind === 'allow') return send(promptNotes(session, peers, config, asked.at))
-    // Claude Code puts a dropped prompt back in the input box, where it waits through a compaction.
-    if (outcome.kind === 'compact-first') {
-      $.clock.after(0, async () => {
-        const failed = await compact($)
-        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}); your prompt is still in the input box.`)
-      })
-    }
+    // Compacting from this hook would run under the turn it holds, so the prompt is dropped first.
+    if (outcome.kind === 'compact-then-send') $.clock.after(0, () => compactThenSend($, e.text, outcome.resend))
     return { drop: outcome.message }
   }).catch(($, e, next) => failOpen($, 'prompt.submit', next.error, () => next(e)))
 
@@ -776,8 +771,48 @@ async function compact($: Api): Promise<string | undefined> {
   try {
     return (await $.session.compact()).skip
   } catch (error) {
-    return error instanceof Error ? error.message : String(error)
+    // Without the engine's "agent-usage-guard: $.session.compact: Error during compaction: ".
+    return (error instanceof Error ? error.message : String(error)).replace(/^[^:]*: \$?\.?session\.compact: (?:Error during compaction: )?/, '')
   }
+}
+
+/** Whether the prompt reads the same sent again by `$.prompt.submit`, which expands no image or @ mention. */
+function resendable(e: { readonly text: string; readonly attachments?: readonly unknown[] }): boolean {
+  return !e.attachments?.length && !/(?:^|\s)@\S/.test(e.text)
+}
+
+/**
+ * Compacts, then sends the prompt the hook dropped as the user's own words. Claude Code puts a
+ * dropped prompt back in the input box, before or after the first look, so it is taken back out
+ * on both sides of the compaction. A prompt that can't be resent as typed stays there.
+ */
+async function compactThenSend($: Api, text: string, resend: boolean): Promise<void> {
+  const takeBack = async () => {
+    if ((await $.prompt.read()).text === text) await $.prompt.fill({ text: '' }).catch(() => undefined)
+  }
+  if (resend) await takeBack()
+  // Sending at full size after a failed compaction is the one thing the user chose against.
+  const failed = await compact($)
+  if (failed !== undefined) {
+    if (resend) await putBack($, text)
+    $.ui.log(`could not compact (${failed}), so your prompt is back in the input box.`)
+    return
+  }
+  if (!resend) return
+  await takeBack()
+  try {
+    await $.prompt.submit({ text, asUser: true })
+  } catch (error) {
+    await putBack($, text)
+    $.ui.log(`could not send your prompt (${String(error)}), so it is back in the input box.`)
+  }
+}
+
+/** Puts `text` back in the input box, ahead of anything typed since, unless the box holds it already. */
+async function putBack($: Api, text: string): Promise<void> {
+  const typed = (await $.prompt.read()).text
+  if (typed.includes(text)) return
+  await $.prompt.fill({ text: typed ? `${text}\n${typed}` : text }).catch(() => undefined)
 }
 
 /** A verdict on an agent, and the slot it holds when allowed, for `releaseStart`. */
