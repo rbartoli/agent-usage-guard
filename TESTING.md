@@ -46,6 +46,7 @@ npx -p typescript@5.9 tsc -p tsconfig.json
 | Denials | Each refusal of a condition reads differently and escalates; separate conditions count separately; the fuse pauses spawns and clears, and `resume` lifts it; a Stop hook reopening the turn changes the wording |
 | Overrides | `simulate` trips every rule with the defaults, opens the real question or prints the refusal, and changes nothing; `/agent-guard allow`, `resume`, the old markers sent alone, and the off switch; `allow` and `pause` refused when another plugin runs them |
 | Status line and band | Redrawn when a plan window it shows resets or an allow ends, in a session where nothing else happens; says when the store stops saving, and clears once a save works; the band shows nothing with nothing to say, counts agents across sessions, shows an open question, a decline and the last refusal, clears on its own as they age out, and draws only where someone is at the keyboard |
+| Managed machines | With a stand-in for Claude Code's `cc-plugin-sec-default`, which passes every classic event over the guard: a compaction clears the context the prompt gate held; a usage-limit lockout is journaled by window when its turn ends, and other API errors are not; a session resumed in place is judged as itself; a Stop hook's reopen still changes the wording; "Compact, then send" and the agent gate still work |
 | Journal | Lockouts classified (usage, weekly, spend, one model) and transient rate limits ignored; each locked window counted once, across sessions and retries; report across sessions, from rows that hold only the values the guard writes; retention and stale-record cleanup; rows hold no prompt text |
 
 ## What is checked by hand
@@ -57,5 +58,9 @@ ran out. On 2.1.316, with `AGENT_GUARD_CONTEXT_HARD` lowered to 10k, "Compact,
 then send" emptied the input box, compacted, and sent the prompt once, under
 "Prompt from the agent-usage-guard plugin". A prompt with an @ mention was
 compacted for (55k to 17k) and left in the box once, and "Cancel" left the
-prompt there once. The demo recording in
+prompt there once. On 2.1.318, a probe mod saw a turn
+refused with a 429 end in `turn.complete` with reason `error`, the transcript's
+last message holding the error Claude Code showed; a `/clear` give the new
+session id at the next prompt; and `$.session.usage()` hold no context figure
+from a `/compact` until the next response. The demo recording in
 `demo/` reproduces the main path against the real UI and uses a little usage.

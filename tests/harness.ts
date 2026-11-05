@@ -33,6 +33,8 @@ export type WorldOptions = {
   contextTokens?: number
 }
 
+type Message = { role: 'user' | 'assistant'; text: string }
+
 export type World = {
   clock: MockClock
   store: Map<string, unknown>
@@ -51,6 +53,10 @@ export type World = {
   nextUsage: Record<string, number> | undefined
   /** While true, the store refuses every write, as when it is full. */
   storeFull: boolean
+  /** The id `$.session.id()` reports: a /clear or a resume changes it. */
+  sessionId: string
+  /** The main transcript `$.session.messages()` returns. */
+  transcript: Message[]
 }
 
 export function world(on: On, options: WorldOptions = {}): World {
@@ -76,6 +82,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     },
     nextUsage: undefined,
     storeFull: false,
+    sessionId: SESSION_ID,
+    transcript: [],
   }
 
   on('store.get', ($, e) => ({ value: structuredClone(store.get(e.key)) }))
@@ -90,7 +98,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('command.register', () => ({ value: undefined }) as never)
-  on('session.id', () => ({ value: SESSION_ID }))
+  on('session.id', () => ({ value: w.sessionId }))
+  on('session.messages', () => ({ value: w.transcript.map((m) => ({ ...m, toolUses: [] })) }) as never)
   on('session.usage', () => ({
     value: { startedAt: T0, context: { window: 1_000_000, ...(contextTokens === undefined ? {} : { tokens: contextTokens }) }, rateLimits: [] },
   }))
@@ -180,6 +189,11 @@ export async function respond($: Engine, w: World, context: number, agentId?: st
   const stream = $.turn.step({ turnId: 't', index: 0, model: 'claude-test', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
   let step = await stream.next()
   while (step.done !== true) step = await stream.next()
+}
+
+/** Ends the main turn, as Claude Code does after its last request: answered, interrupted, or dead on an API error. */
+export async function endTurn($: Engine, reason: 'answer' | 'aborted' | 'error' = 'answer'): Promise<void> {
+  await $.turn.complete({ turnId: 't', reason, answer: '', durationMs: 1, isAborted: reason === 'aborted' } as never)
 }
 
 export function usageOf(context: number): Record<string, number> {

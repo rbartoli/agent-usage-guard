@@ -121,8 +121,10 @@ let storeFailure: string | undefined
 /** The pending redraw of the status line, and the time it is for. */
 let redraw: { at: number; timer: Timer } | undefined
 let compactAfterTurn = false
-/** A Stop event happened and no prompt has started a new turn since. */
-let stopSeen = false
+/** The main turn whose last request ended it, when Claude Code runs its Stop hooks: another request in it means one reopened the turn. */
+let endedTurn: string | undefined
+/** What StopFailure said of the request that failed, for the end of its turn to journal. */
+let failure: Failure | undefined
 let journalCache: { key: string; rows: JournalRow[] } | undefined
 /** One question per family at a time: calls that trip while it is open are held back. */
 const pending = new Map<string, Promise<unknown>>()
@@ -168,13 +170,6 @@ export function register(on: On): void {
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.PostCompact', next.error, () => next(e)))
 
-  on('classic.Stop', async ($, e, next) => {
-    trackMode(e.permission_mode, e.agent_id)
-    stopSeen = true
-    if (e.stop_hook_active) session.reopened = true
-    return next(e)
-  }).catch(($, e, next) => failOpen($, 'classic.Stop', next.error, () => next(e)))
-
   on('classic.SubagentStart', async ($, e, next) => {
     const now = await $.clock.now()
     if (observeAgentStart(session, now, e.agent_id, e.agent_type)) await publish($, now)
@@ -182,19 +177,9 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.SubagentStart', next.error, () => next(e)))
 
   on('classic.StopFailure', async ($, e, next) => {
-    if (config.enabled) {
-      // On StopFailure, last_assistant_message is the failed request's own
-      // error message, the text Claude Code shows, not Claude's earlier prose.
-      const text = `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}`
-      const kind = lockoutKind(e.error, text, Object.values(session.limits))
-      if (kind) {
-        const now = await $.clock.now()
-        const reading = session.limits[kind]
-        // A current reading's reset time names the window, so the report counts each lockout once.
-        const resets = reading?.resetsAt !== undefined && reading.resetsAt > now ? reading.resetsAt : undefined
-        await journal($, now, { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}), ...(resets === undefined ? {} : { resets }) })
-      }
-    }
+    // On StopFailure, last_assistant_message is the failed request's own
+    // error message, the text Claude Code shows, not Claude's earlier prose.
+    failure = { error: e.error, text: `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}` }
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.StopFailure', next.error, () => next(e)))
 
@@ -230,13 +215,14 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'session.measure', next.error, () => next(e)))
 
   on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined && e.turnId === endedTurn) session.reopened = true
     const result = yield* next(e)
     // A streaming hook fails open by hand: recording a response must never fail the request.
     try {
+      if (e.agentId === undefined) endedTurn = result.stopReason === 'end_turn' && result.toolUses.length === 0 ? e.turnId : undefined
       if (config.enabled && result.usage) {
         const now = await $.clock.now()
         const loop = e.agentId ?? MAIN
-        if (loop === MAIN && stopSeen) session.reopened = true
         observeResponse(session, config, now, loop, {
           input: result.usage.input_tokens,
           output: result.usage.output_tokens,
@@ -260,7 +246,11 @@ export function register(on: On): void {
       await publish($, now)
       return result
     }
+    const reported = failure
+    failure = undefined
+    endedTurn = undefined
     observeTurnEnd(session)
+    if (e.reason === 'error') await journalLockout($, now, reported)
     if (compactAfterTurn) {
       compactAfterTurn = false
       $.clock.after(0, async () => {
@@ -274,6 +264,8 @@ export function register(on: On): void {
 
   on('prompt.submit', async ($, e, next) => {
     if (!config.enabled) return next(e)
+    // A /clear, a resume or a fork goes on under another session id; on a managed machine the SessionStart that says so never arrives.
+    if ((await $.session.id()) !== session.id) await startSession($)
     const now = await $.clock.now()
     const source = sourceOf(e.origin.kind)
 
@@ -301,7 +293,8 @@ export function register(on: On): void {
     }
     const verdict = await gate(now)
     if (session.dormantResumes.at(-1) === now) await publish($, now)
-    stopSeen = false
+    endedTurn = undefined
+    failure = undefined
     session.reopened = false
 
     if (verdict.kind === 'allow') return send(verdict.note)
@@ -501,7 +494,8 @@ async function startSession($: Api): Promise<void> {
   session = newSession(id, canAsk())
   lastActiveKept = undefined
   journalCache = undefined
-  stopSeen = false
+  endedTurn = undefined
+  failure = undefined
   compactAfterTurn = false
 }
 
@@ -621,11 +615,19 @@ async function loadPeers($: Api, now: number): Promise<void> {
   }
 }
 
-/** The main context before a prompt, from Claude Code's own figure. */
+/**
+ * The main context before a prompt, from Claude Code's own figure. It has none
+ * from a compaction until the next response, which is how the guard sees a
+ * compaction whose own events never reach it, as on a managed machine.
+ */
 async function readMainContext($: Api): Promise<void> {
   try {
     const usage = await $.session.usage()
     if (usage.context.tokens !== undefined) observeMainContext(session, config, usage.context.tokens)
+    else if (session.loops[MAIN]?.context !== undefined) {
+      observeCompaction(session)
+      await refreshStatus($)
+    }
   } catch {
     // Keep the last figure a response reported.
   }
@@ -876,6 +878,35 @@ function argumentsOf(e: Readonly<Record<string, unknown>>): Record<string, unkno
   const args: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(e)) if (!ENVELOPE_KEYS.has(key)) args[key] = value
   return { tool: e.tool, args }
+}
+
+/** The text of a failed request, and the error kind when StopFailure gave one. */
+type Failure = { error?: string; text: string }
+
+/**
+ * Journals a lockout that ended the main turn. StopFailure names the error
+ * kind; where it never arrives, as on a managed machine, the transcript's last
+ * message is the error Claude Code showed.
+ */
+async function journalLockout($: Api, now: number, reported: Failure | undefined): Promise<void> {
+  const failed = reported ?? (await lastMessage($))
+  const kind = failed && lockoutKind(failed.error, failed.text, Object.values(session.limits))
+  if (!kind) return
+  const reading = session.limits[kind]
+  // A current reading's reset time names the window, so the report counts each lockout once.
+  const resets = reading?.resetsAt !== undefined && reading.resetsAt > now ? reading.resetsAt : undefined
+  await journal($, now, { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}), ...(resets === undefined ? {} : { resets }) })
+}
+
+/** The main transcript's last message, when Claude wrote it. */
+async function lastMessage($: Api): Promise<Failure | undefined> {
+  try {
+    const messages = await $.session.messages()
+    const last = Array.isArray(messages) ? messages.at(-1) : undefined
+    return last?.role === 'assistant' ? { text: last.text } : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Journals a refusal the model reads. */

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **The guard keeps working where Claude Code passes its classic hook events
+  over it ([#60](https://github.com/rbartoli/agent-usage-guard/issues/60)).**
+  On Team and Enterprise plans, and on machines with managed settings, Claude
+  Code's built-in `cc-plugin-sec-default` plugin runs first and sends every
+  `classic.*` event on past user plugins. The guard then kept a compacted
+  session's old context and asked to compact first at the next prompt;
+  journaled no lockouts, so the report undercounted them; carried one
+  session's counts into the next after `/clear` or a resume; and missed a Stop
+  hook reopening a turn. It now reads each from events that still reach it.
+  Claude Code has no context figure from a compaction until the next response.
+  A turn that dies on an API error ends with reason `error`, and the
+  transcript's last message is the error Claude Code showed. A new session has
+  a new id at the next prompt. And a request after one that ended the turn
+  means a Stop hook reopened it. Where the classic events arrive, the guard
+  still uses them for compactions, new sessions and the error's kind. The
+  permission mode and `/subtask` forks still need them, and the README says
+  what that costs. Checked on Claude Code 2.1.318.
+- **A usage-limit message counts as a lockout even when the guard can't tell
+  the window.** "You've hit your Sonnet limit" named no window the guard
+  knows, so it wasn't journaled at all; it now counts as a lockout of unknown
+  kind. The guard tells a limit message from other errors the way Claude Code
+  does, by how it opens.
 - **"Compact, then send" sends your prompt again.** 1.1.3 turned it into
   "Compact first", which left the prompt in the input box to send by hand, so
   a session sat idle after compacting until you came back. The guard again
