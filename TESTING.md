@@ -62,5 +62,13 @@ prompt there once. On 2.1.318, a probe mod saw a turn
 refused with a 429 end in `turn.complete` with reason `error`, the transcript's
 last message holding the error Claude Code showed; a `/clear` give the new
 session id at the next prompt; and `$.session.usage()` hold no context figure
-from a `/compact` until the next response. The demo recording in
+from a `/compact` until the next response. Claude Code's real
+`cc-plugin-sec-default` was then seated by giving one process a managed-settings
+file: `bwrap` mounted a fresh `/etc` with each real entry bound back in, plus
+`/etc/claude-code/managed-settings.json` holding one harmless setting (an empty
+one doesn't seat it). Against a scripted API, 1.2.0-rc.3 journaled a usage-limit
+lockout, sent the first prompt after `/compact` without the "compact first?"
+question, filed the journal under the new session id after `/clear`, and worded
+the second refusal in a turn a Stop hook reopened as the user's decision.
+1.2.0-rc.2, without the fix, did none of the four. The demo recording in
 `demo/` reproduces the main path against the real UI and uses a little usage.
