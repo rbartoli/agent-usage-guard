@@ -2,6 +2,7 @@
 // crossing and lockout. Rows hold rule names, tool names, coarse buckets and
 // times, never prompt text, tool inputs or model output.
 
+import { WINDOW_KIND } from './state.ts'
 import { count, duration, windowName } from './text.ts'
 
 export type JournalEvent =
@@ -60,10 +61,39 @@ export function splitJournalKeys(keys: readonly string[], now: number, days: num
   return split
 }
 
+const EVENTS: ReadonlySet<string> = new Set(['ask', 'answer', 'deny', 'drop', 'override', 'limit', 'note', 'lockout'])
+const ANSWERS: ReadonlySet<string> = new Set(['allow', 'compact', 'refuse', 'cancel', 'dismiss', 'unavailable'])
+const BUCKETS: ReadonlySet<string> = new Set(['<150k', '150-300k', '300-400k', '400-500k', '>=500k'])
+/** Rule names, override scopes and thresholds such as `80%`. */
+const RULE = /^[a-z0-9%-]{1,32}$/
+/** Tool names, MCP ones included: `mcp__github__create_issue`. */
+const TOOL = /^[\w.-]{1,128}$/
+const SESSION_PREFIX = /^[\w-]{1,32}$/
+
+/**
+ * A row read back from the store, checked field by field: the report prints
+ * them, and Claude reads the report with its next request.
+ */
 export function isJournalRow(value: unknown): value is JournalRow {
   if (typeof value !== 'object' || value === null) return false
   const r = value as Record<string, unknown>
-  return typeof r.t === 'number' && typeof r.ev === 'string' && typeof r.s === 'string'
+  const optional = (key: string, ok: (v: unknown) => boolean): boolean => r[key] === undefined || ok(r[key])
+  const text = (pattern: RegExp) => (v: unknown) => typeof v === 'string' && pattern.test(v)
+  const oneOf = (set: ReadonlySet<string>) => (v: unknown) => typeof v === 'string' && set.has(v)
+  const finite = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+  return (
+    finite(r.t) &&
+    text(SESSION_PREFIX)(r.s) &&
+    oneOf(EVENTS)(r.ev) &&
+    optional('rule', text(RULE)) &&
+    optional('answer', oneOf(ANSWERS)) &&
+    optional('tool', text(TOOL)) &&
+    optional('ctx', oneOf(BUCKETS)) &&
+    optional('kind', text(WINDOW_KIND)) &&
+    optional('pct', finite) &&
+    optional('resets', finite) &&
+    optional('n', finite)
+  )
 }
 
 type RuleCount = { asks: number; allowed: number; declined: number; denials: number; drops: number }
@@ -71,7 +101,7 @@ type RuleCount = { asks: number; allowed: number; declined: number; denials: num
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
   const recent = rows.filter((r) => now - r.t < days * DAY_MS).sort((a, b) => a.t - b.t)
-  const lines = [`agent-usage-guard report: last ${count(days, 'day')}`]
+  const lines = [`Report for the last ${count(days, 'day')}`]
   if (recent.length === 0) {
     lines.push('', 'Nothing recorded yet. The journal fills as the guard asks, refuses, or sees a limit.')
     return lines.join('\n')

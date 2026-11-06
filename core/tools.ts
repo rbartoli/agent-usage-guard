@@ -2,8 +2,9 @@
 // loop carries a heavy context. Each loop is judged on its own context, so a
 // subagent's calls never inherit the main conversation's size.
 
+import { highestLimit, limitDetail } from './agents.ts'
 import type { Config } from './config.ts'
-import { type LoopId, MAIN, type SessionState, loopOf, overrideCovers, within } from './state.ts'
+import { type LoopId, MAIN, type PeerRecord, type SessionState, loopOf, overrideCovers, within } from './state.ts'
 import { count, duration, sentence, shortClock, tokens } from './text.ts'
 import { ALLOW, type Ask, type Deny, type Verdict, refuse } from './verdict.ts'
 
@@ -17,6 +18,26 @@ const EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'AskUserQuestion',
   'ExitPlanMode',
 ])
+
+/** Tools that start a turn later, on their own: a wakeup, a scheduled job. */
+const SCHEDULING: ReadonlySet<string> = new Set(['ScheduleWakeup', 'CronCreate'])
+
+export function isScheduling(tool: string): boolean {
+  return SCHEDULING.has(tool)
+}
+
+/**
+ * From the refusal threshold, a wakeup or scheduled job is refused like a new
+ * agent: the turn it starts later would run into the limit with nobody there.
+ * The agents override lifts it.
+ */
+export function scheduleGate(state: SessionState, peers: readonly PeerRecord[], config: Config, now: number, request: ToolRequest): Verdict {
+  if (!config.enabled || !isScheduling(request.tool) || overrideCovers(state, now, 'agents')) return ALLOW
+  const limit = highestLimit(state, peers, now)
+  if (!limit || limit.percent < config.limitDenyPercent) return ALLOW
+  const base = `This ${request.tool} call was refused: ${limitDetail(limit)}, and the turn it starts would run into the limit. Finish the step in progress instead; the user can lift this with /agent-guard allow.`
+  return refuse(state, config, now, 'schedule', `schedule:${request.tool}`, base, false)
+}
 
 export type ToolRequest = {
   loop: LoopId

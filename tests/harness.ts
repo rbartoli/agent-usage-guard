@@ -1,7 +1,7 @@
 // Stubs for everything the mod asks Claude Code for, so each test drives the
 // real hooks module with no session, model, network or disk.
 
-import type { On } from 'claude-code'
+import type { On, RenderElement } from 'claude-code'
 import { type Engine, type MockClock, mock } from 'claude-code/testing'
 
 export const T0 = Date.UTC(2027, 0, 15, 12, 0, 0)
@@ -17,17 +17,23 @@ export type WorldOptions = {
   answers?: Array<string | undefined>
   /** The session has no AskUserQuestion tool, as with `--tools Agent,Read`. */
   noQuestionTool?: boolean
+  /** Holds each question open until it resolves, so a test can look while it is asked. */
+  questionHeld?: () => Promise<void>
   /** The question dialog fails to open, as on an engine error. */
   askFails?: boolean
   /** Claude Code's answer to a tool call the test fires; a promise keeps the call running. */
   toolResult?: (e: ToolEvent) => Record<string, unknown> | Promise<Record<string, unknown>>
   /** What `$.session.compact()` answers, such as `{ skip }` when a hook vetoes it. */
   compactResult?: () => Record<string, unknown>
+  /** The model a spawn reports it runs on when the call names none, as an agent's own definition picks. */
+  spawnModel?: string
   /** Runs inside every agent spawn before it answers, so a test can hold one while it starts. */
   onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
   contextTokens?: number
 }
+
+type Message = { role: 'user' | 'assistant'; text: string }
 
 export type World = {
   clock: MockClock
@@ -38,12 +44,19 @@ export type World = {
   statuses: Array<string | undefined>
   fills: string[]
   /** The input box's text: what fills put there, or what a test says Claude Code put back. */
+  draft: string
   submits: Array<Record<string, unknown>>
   compactions: number
   ran: string[]
   setContext(tokens: number | undefined): void
   /** The usage the next model request reports. */
   nextUsage: Record<string, number> | undefined
+  /** While true, the store refuses every write, as when it is full. */
+  storeFull: boolean
+  /** The id `$.session.id()` reports: a /clear or a resume changes it. */
+  sessionId: string
+  /** The main transcript `$.session.messages()` returns. */
+  transcript: Message[]
 }
 
 export function world(on: On, options: WorldOptions = {}): World {
@@ -60,6 +73,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     logs: [],
     statuses: [],
     fills: [],
+    draft: '',
     submits: [],
     compactions: 0,
     ran: [],
@@ -67,10 +81,14 @@ export function world(on: On, options: WorldOptions = {}): World {
       contextTokens = tokens
     },
     nextUsage: undefined,
+    storeFull: false,
+    sessionId: SESSION_ID,
+    transcript: [],
   }
 
   on('store.get', ($, e) => ({ value: structuredClone(store.get(e.key)) }))
   on('store.set', ($, e) => {
+    if (w.storeFull) throw new Error('the store would pass 4 MiB')
     store.set(e.key, structuredClone(e.value))
     return { value: undefined }
   })
@@ -80,7 +98,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('command.register', () => ({ value: undefined }) as never)
-  on('session.id', () => ({ value: SESSION_ID }))
+  on('session.id', () => ({ value: w.sessionId }))
+  on('session.messages', () => ({ value: w.transcript.map((m) => ({ ...m, toolUses: [] })) }) as never)
   on('session.usage', () => ({
     value: { startedAt: T0, context: { window: 1_000_000, ...(contextTokens === undefined ? {} : { tokens: contextTokens }) }, rateLimits: [] },
   }))
@@ -98,8 +117,10 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('prompt.fill', ($, e) => {
     w.fills.push(e.text)
+    w.draft = e.text
     return { isFilled: true } as never
   })
+  on('prompt.read', () => ({ value: { text: w.draft, cursor: w.draft.length } }) as never)
   on('prompt.submit', ($, e) => {
     if (e.origin?.kind === 'plugin') w.submits.push(e as Record<string, unknown>)
     return { text: e.text, ...(e.context ? { context: e.context } : {}) }
@@ -115,14 +136,20 @@ export function world(on: On, options: WorldOptions = {}): World {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage } as never
   })
   on('turn.complete', () => ({ text: '' }))
+  // The engine's own band above the prompt: empty, as with no survey.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return h(Box, null) as RenderElement
+  })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('agent.spawn', async ($, e) => {
     const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
-    return { model: 'claude-test', agentId } as never
+    return { model: (e.model as string | undefined) ?? options.spawnModel ?? 'claude-test', agentId } as never
   })
-  on('tool.call', ($, e) => {
+  on('tool.call', async ($, e) => {
     if (e.tool === 'AskUserQuestion') {
+      await options.questionHeld?.()
       if (options.noQuestionTool) return { deny: 'no tool named "AskUserQuestion" in this session' }
       if (options.askFails) throw new Error('the dialog could not open')
       const questions = e.questions as Array<{ question: string; options: Array<{ label: string }> }>
@@ -162,6 +189,11 @@ export async function respond($: Engine, w: World, context: number, agentId?: st
   const stream = $.turn.step({ turnId: 't', index: 0, model: 'claude-test', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
   let step = await stream.next()
   while (step.done !== true) step = await stream.next()
+}
+
+/** Ends the main turn, as Claude Code does after its last request: answered, interrupted, or dead on an API error. */
+export async function endTurn($: Engine, reason: 'answer' | 'aborted' | 'error' = 'answer'): Promise<void> {
+  await $.turn.complete({ turnId: 't', reason, answer: '', durationMs: 1, isAborted: reason === 'aborted' } as never)
 }
 
 export function usageOf(context: number): Record<string, number> {

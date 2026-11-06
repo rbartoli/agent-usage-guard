@@ -43,9 +43,11 @@ export type Config = {
   peerTtlMs: number
   journal: boolean
   journalDays: number
+  /** Haiku agents stay out of the running and starts counts. */
+  haikuExempt: boolean
 }
 
-type Field = Exclude<keyof Config, 'enabled' | 'journal'>
+type Field = Exclude<keyof Config, 'enabled' | 'journal' | 'haikuExempt'>
 
 type Spec = {
   field: Field
@@ -82,12 +84,12 @@ export const SPECS: readonly Spec[] = [
   { field: 'journalDays', env: 'AGENT_GUARD_JOURNAL_DAYS', default: 90, min: 1, max: 3650, scale: 1 },
 ]
 
-export const SWITCHES = { enabled: 'AGENT_GUARD', journal: 'AGENT_GUARD_JOURNAL' } as const
+export const SWITCHES = { enabled: 'AGENT_GUARD', journal: 'AGENT_GUARD_JOURNAL', haikuExempt: 'AGENT_GUARD_HAIKU_EXEMPT' } as const
 
 const OFF = new Set(['0', 'false', 'off', 'no'])
 
 export function defaultConfig(): Config {
-  const config = { enabled: true, journal: true } as Config
+  const config = { enabled: true, journal: true, haikuExempt: true } as Config
   for (const spec of SPECS) config[spec.field] = spec.default * spec.scale
   return config
 }

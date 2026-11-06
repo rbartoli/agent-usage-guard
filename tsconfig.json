@@ -5,5 +5,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": false
   },
-  "include": ["hooks", "core", "tests"]
+  "include": ["hooks", "core", "tests", "types"]
 }

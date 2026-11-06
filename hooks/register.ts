@@ -2,11 +2,14 @@
 // and requests, asks the user when a verdict needs an answer, and keeps the
 // cross-session records in $.store. Every decision lives in ../core.
 
-import type { EngineInterface, On, Timer } from 'claude-code'
+import type { EngineInterface, On, RenderElement, Timer } from 'claude-code'
+
+import type { Band } from '../types'
 
 import {
   type AgentRequest,
   type Ask,
+  type Asking,
   type Config,
   DEFAULT_ALLOW_MINUTES,
   type Deny,
@@ -17,10 +20,13 @@ import {
   type PromptSource,
   SIGNATURE,
   type SessionState,
+  type SimulatedRule,
   type ToolRequest,
   type Verdict,
   agentGate,
   applyOverride,
+  bandExpiry,
+  bandLine,
   canonical,
   contextBucket,
   defaultConfig,
@@ -30,7 +36,9 @@ import {
   heldForQuestion,
   helpText,
   highestLimit,
+  isHaiku,
   isJournalRow,
+  isScheduling,
   journalKey,
   livePeers,
   lockoutKind,
@@ -59,6 +67,8 @@ import {
   resolveHeavyAsk,
   resolvePromptAsk,
   resumeGuard,
+  scheduleGate,
+  simulate,
   splitJournalKeys,
   statusLine,
   statusLineExpiry,
@@ -69,6 +79,8 @@ import {
 type Api = EngineInterface
 
 const COMMAND = 'agent-guard'
+/** What the band above the prompt draws, kept where a redraw reads it. */
+const BAND = { plugin: 'agent-usage-guard', key: 'band' } as const
 const PEER_PREFIX = 'peer:'
 const LAST_ACTIVE_PREFIX = 'last-active:'
 const HEARTBEAT_MS = 60_000
@@ -82,8 +94,12 @@ const STALE_PEER_MS = 86_400_000
 const LAST_ACTIVE_KEEP_MS = 30 * 86_400_000
 /** A redraw waits at most a day, then times the rest: a JavaScript timer cannot wait past 24.8 days, and a window may reset later. */
 const REDRAW_MAX_MS = 86_400_000
+/** Prompts that start a turn on their own: a schedule or /loop firing, a relayed channel message, a Slack ping. */
+const UNATTENDED: ReadonlySet<string> = new Set(['scheduled-trigger', 'channel', 'slack-ping'])
 /** Keys of the tool call's envelope, not of the tool's own arguments. */
 const ENVELOPE_KEYS = new Set(['tool', 'tool_use_id', 'agentId', 'consent'])
+/** An agent name a question may show as it is. */
+const PLAIN_NAME = /^[\w.-]{1,32}$/
 
 let config: Config = defaultConfig()
 let problems: string[] = []
@@ -99,11 +115,16 @@ let lastPublished = 0
 /** The last-active time this process last stored, so a heartbeat does not rewrite it. */
 let lastActiveKept: number | undefined
 let lastStatus: string | undefined
+let lastBand: string | undefined
+/** Why the last write to the store failed, while no write has worked since. */
+let storeFailure: string | undefined
 /** The pending redraw of the status line, and the time it is for. */
 let redraw: { at: number; timer: Timer } | undefined
 let compactAfterTurn = false
-/** A Stop event happened and no prompt has started a new turn since. */
-let stopSeen = false
+/** The main turn whose last request ended it, when Claude Code runs its Stop hooks: another request in it means one reopened the turn. */
+let endedTurn: string | undefined
+/** What StopFailure said of the request that failed, for the end of its turn to journal. */
+let failure: Failure | undefined
 let journalCache: { key: string; rows: JournalRow[] } | undefined
 /** One question per family at a time: calls that trip while it is open are held back. */
 const pending = new Map<string, Promise<unknown>>()
@@ -149,13 +170,6 @@ export function register(on: On): void {
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.PostCompact', next.error, () => next(e)))
 
-  on('classic.Stop', async ($, e, next) => {
-    trackMode(e.permission_mode, e.agent_id)
-    stopSeen = true
-    if (e.stop_hook_active) session.reopened = true
-    return next(e)
-  }).catch(($, e, next) => failOpen($, 'classic.Stop', next.error, () => next(e)))
-
   on('classic.SubagentStart', async ($, e, next) => {
     const now = await $.clock.now()
     if (observeAgentStart(session, now, e.agent_id, e.agent_type)) await publish($, now)
@@ -163,19 +177,9 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'classic.SubagentStart', next.error, () => next(e)))
 
   on('classic.StopFailure', async ($, e, next) => {
-    if (config.enabled) {
-      // On StopFailure, last_assistant_message is the failed request's own
-      // error message, the text Claude Code shows, not Claude's earlier prose.
-      const text = `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}`
-      const kind = lockoutKind(e.error, text, Object.values(session.limits))
-      if (kind) {
-        const now = await $.clock.now()
-        const reading = session.limits[kind]
-        // A current reading's reset time names the window, so the report counts each lockout once.
-        const resets = reading?.resetsAt !== undefined && reading.resetsAt > now ? reading.resetsAt : undefined
-        await journal($, now, { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}), ...(resets === undefined ? {} : { resets }) })
-      }
-    }
+    // On StopFailure, last_assistant_message is the failed request's own
+    // error message, the text Claude Code shows, not Claude's earlier prose.
+    failure = { error: e.error, text: `${e.error_details ?? ''} ${e.last_assistant_message ?? ''}` }
     return next(e)
   }).catch(($, e, next) => failOpen($, 'classic.StopFailure', next.error, () => next(e)))
 
@@ -211,13 +215,14 @@ export function register(on: On): void {
   }).catch(($, e, next) => failOpen($, 'session.measure', next.error, () => next(e)))
 
   on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined && e.turnId === endedTurn) session.reopened = true
     const result = yield* next(e)
     // A streaming hook fails open by hand: recording a response must never fail the request.
     try {
+      if (e.agentId === undefined) endedTurn = result.stopReason === 'end_turn' && result.toolUses.length === 0 ? e.turnId : undefined
       if (config.enabled && result.usage) {
         const now = await $.clock.now()
         const loop = e.agentId ?? MAIN
-        if (loop === MAIN && stopSeen) session.reopened = true
         observeResponse(session, config, now, loop, {
           input: result.usage.input_tokens,
           output: result.usage.output_tokens,
@@ -241,12 +246,16 @@ export function register(on: On): void {
       await publish($, now)
       return result
     }
+    const reported = failure
+    failure = undefined
+    endedTurn = undefined
     observeTurnEnd(session)
+    if (e.reason === 'error') await journalLockout($, now, reported)
     if (compactAfterTurn) {
       compactAfterTurn = false
       $.clock.after(0, async () => {
         const failed = await compact($)
-        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}).`)
+        if (failed !== undefined) $.ui.log(`could not compact (${failed}).`)
       })
     }
     await refreshStatus($)
@@ -255,10 +264,12 @@ export function register(on: On): void {
 
   on('prompt.submit', async ($, e, next) => {
     if (!config.enabled) return next(e)
+    // A /clear, a resume or a fork goes on under another session id; on a managed machine the SessionStart that says so never arrives.
+    if ((await $.session.id()) !== session.id) await startSession($)
     const now = await $.clock.now()
     const source = sourceOf(e.origin.kind)
 
-    const scope = source === 'other' ? undefined : markerScope(e.text)
+    const scope = fromPerson(e.origin.kind) ? markerScope(e.text) : undefined
     if (scope) {
       const text = applyOverride(session, now, scope, DEFAULT_ALLOW_MINUTES)
       await journal($, now, { ev: 'override', rule: scope })
@@ -282,7 +293,8 @@ export function register(on: On): void {
     }
     const verdict = await gate(now)
     if (session.dormantResumes.at(-1) === now) await publish($, now)
-    stopSeen = false
+    endedTurn = undefined
+    failure = undefined
     session.reopened = false
 
     if (verdict.kind === 'allow') return send(verdict.note)
@@ -299,16 +311,11 @@ export function register(on: On): void {
       if (alone.kind === 'drop') return { drop: alone.message }
       return send(alone.kind === 'allow' ? alone.note : undefined)
     }
-    const outcome = resolvePromptAsk(session, verdict, asked.answer)
-    await journalAnswer($, verdict, asked, outcome.kind === 'compact-first' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
+    const outcome = resolvePromptAsk(session, verdict, asked.answer, resendable(e))
+    await journalAnswer($, verdict, asked, outcome.kind === 'compact-then-send' ? 'compact' : outcome.kind === 'allow' ? 'allow' : 'cancel')
     if (outcome.kind === 'allow') return send(promptNotes(session, peers, config, asked.at))
-    // Claude Code puts a dropped prompt back in the input box, where it waits through a compaction.
-    if (outcome.kind === 'compact-first') {
-      $.clock.after(0, async () => {
-        const failed = await compact($)
-        if (failed !== undefined) $.ui.log(`agent-usage-guard could not compact (${failed}); your prompt is still in the input box.`)
-      })
-    }
+    // Compacting from this hook would run under the turn it holds, so the prompt is dropped first.
+    if (outcome.kind === 'compact-then-send') $.clock.after(0, () => compactThenSend($, e.text, outcome.resend))
     return { drop: outcome.message }
   }).catch(($, e, next) => failOpen($, 'prompt.submit', next.error, () => next(e)))
 
@@ -322,24 +329,29 @@ export function register(on: On): void {
     if (resumed !== undefined && gatedResumes.has(resumed)) return next(e)
     const known = resumed === undefined ? undefined : session.agents[resumed]
     const parentDepth = e.parentAgentId ? (session.agents[e.parentAgentId]?.depth ?? 1) : 0
-    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined }
+    // A fork runs on its parent's model; any other agent on the one it names, else its own definition's or its parent's.
+    const asked = config.haikuExempt && isHaiku(e.fork ? e.parentModel : e.model)
+    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined, cheap: known?.cheap ?? asked }
     const { verdict, reservedAt } = await agentVerdict($, now, request)
     if (verdict.kind === 'deny') {
       await journalDenial($, verdict, 'Agent')
       return { deny: verdict.message }
     }
     let started: string | undefined
+    let cheap = request.cheap
     try {
       const result = await next(e)
       if (!result.deny && result.agentId) {
         started = result.agentId
         const kind = e.isTeammate ? 'teammate' : e.workflow ? 'workflow' : e.fork ? 'fork' : 'subagent'
+        // The model it runs on is known only now: an agent's own definition may pick Haiku.
+        if (!known) cheap = config.haikuExempt && isHaiku(result.model)
         if (known) observeAgentActive(session, started)
-        else observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, ...(e.name ? { name: e.name } : {}) })
+        else observeSpawn(session, await $.clock.now(), { agentId: started, kind, depth: request.depth, cheap, ...(e.name ? { name: e.name } : {}) })
       }
       return result
     } finally {
-      if (reservedAt !== undefined) releaseStart(session, reservedAt, started)
+      if (reservedAt !== undefined) releaseStart(session, reservedAt, started, cheap)
       await publish($, await $.clock.now())
     }
   }).catch(($, e, next) =>
@@ -359,7 +371,8 @@ export function register(on: On): void {
     if (e.tool === 'SendMessage') {
       const target = resumeTarget(e.to, e.message)
       if (target) {
-        const { verdict, reservedAt } = await agentVerdict($, now, { loop, depth: session.agents[target]!.depth, resume: true })
+        const agent = session.agents[target]!
+        const { verdict, reservedAt } = await agentVerdict($, now, { loop, depth: agent.depth, resume: true, cheap: agent.cheap === true })
         if (verdict.kind === 'deny') {
           await journalDenial($, verdict, 'SendMessage')
           return { deny: verdict.message }
@@ -371,9 +384,11 @@ export function register(on: On): void {
 
     const print = fingerprint(canonical(argumentsOf(e)))
     if (!resumed) {
-      const label = loop === MAIN ? 'this conversation' : `agent ${session.agents[loop]?.name ?? loop.slice(0, 8)}`
+      const label = loop === MAIN ? 'this conversation' : agentLabel(loop)
       const request = { loop, tool: e.tool, fingerprint: print, label }
-      let verdict = toolGate(session, config, now, request)
+      if (isScheduling(e.tool)) await loadPeers($, now)
+      let verdict = scheduleGate(session, peers, config, now, request)
+      if (verdict.kind === 'allow') verdict = toolGate(session, config, now, request)
       if (verdict.kind === 'ask') verdict = await settleHeavy($, verdict, request)
       if (verdict.kind === 'deny') {
         await journalDenial($, verdict, e.tool, contextBucket(session.loops[loop]?.context))
@@ -391,12 +406,22 @@ export function register(on: On): void {
       if (resumed) {
         gatedResumes.delete(resumed.id)
         const delivered = result !== undefined && !result.deny && !result.isError
-        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined)
+        if (resumed.reservedAt !== undefined) releaseStart(session, resumed.reservedAt, delivered ? resumed.id : undefined, session.agents[resumed.id]?.cheap === true)
         if (delivered) observeAgentActive(session, resumed.id)
         await publish($, await $.clock.now())
       }
     }
   }).catch(($, e, next) => failOpen($, 'tool.call', next.error, () => next(e)))
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const { value } = await $.state.get(BAND)
+    if (!value || e.props.hasSurvey) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const line = h(Text, value.alert ? { bold: true, wrap: 'truncate-end' } : { dimColor: true, wrap: 'truncate-end' }, value.text)
+    // The band is one slot: what other plugins draw there stays, under the guard's line.
+    const beneath = await next(e)
+    return h(Box, { flexDirection: 'column' }, line, beneath) as RenderElement
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: COMMAND }, async ($, e) => {
     const now = await $.clock.now()
@@ -405,9 +430,9 @@ export function register(on: On): void {
     if (command.action === 'report') return { text: await report($, now, command.days) }
     if (command.action === 'allow') {
       // Only the person lifts limits: another plugin's $.command.run reaches this hook too.
-      if (sourceOf(e.origin.kind) === 'other') {
+      if (!fromPerson(e.origin.kind)) {
         const from = e.origin.kind === 'plugin' ? `the ${e.origin.name} plugin` : `a ${e.origin.kind} prompt`
-        $.ui.log(`agent-usage-guard refused /${COMMAND} ${e.args.trim()} from ${from}.`)
+        $.ui.log(`refused /${COMMAND} ${e.args.trim()} from ${from}.`)
         return { text: `Only you can lift the guard's limits, and this came from ${from}, so nothing changed. Type /${COMMAND} ${e.args.trim()} to lift them.` }
       }
       const text = applyOverride(session, now, command.scope, command.minutes)
@@ -415,13 +440,14 @@ export function register(on: On): void {
       await refreshStatus($)
       return { text }
     }
+    if (command.action === 'simulate') return { text: await simulation($, command.rule, now) }
     if (command.action === 'resume') {
       const text = resumeGuard(session)
       await refreshStatus($)
       return { text }
     }
     await loadPeers($, now)
-    return { text: statusReport(session, peers, config, now, problems, await pluginVersion($)) }
+    return { text: statusReport(session, peers, config, now, problems, await pluginVersion($), storeFailure) }
   }).catch(($, e, next) => ({ text: `The command failed: ${next.error?.message ?? 'unknown error'}` }))
 }
 
@@ -430,6 +456,7 @@ async function loadConfig($: Api): Promise<void> {
   const parsed = parseConfig({
     AGENT_GUARD: await $.env.get('AGENT_GUARD'),
     AGENT_GUARD_JOURNAL: await $.env.get('AGENT_GUARD_JOURNAL'),
+    AGENT_GUARD_HAIKU_EXEMPT: await $.env.get('AGENT_GUARD_HAIKU_EXEMPT'),
     AGENT_GUARD_WINDOW_SECONDS: await $.env.get('AGENT_GUARD_WINDOW_SECONDS'),
     AGENT_GUARD_AGENT_MAX: await $.env.get('AGENT_GUARD_AGENT_MAX'),
     AGENT_GUARD_ROLLING_MAX: await $.env.get('AGENT_GUARD_ROLLING_MAX'),
@@ -467,7 +494,8 @@ async function startSession($: Api): Promise<void> {
   session = newSession(id, canAsk())
   lastActiveKept = undefined
   journalCache = undefined
-  stopSeen = false
+  endedTurn = undefined
+  failure = undefined
   compactAfterTurn = false
 }
 
@@ -510,10 +538,20 @@ function trackMode(mode: string | undefined, agentId: string | undefined): void 
   session.canAsk = canAsk()
 }
 
+/**
+ * Who a prompt is from, for the prompt gate. Scheduled prompts, channel
+ * messages and Slack pings start a turn with nobody at the keyboard to answer,
+ * so the gate holds a heavy one with the reason, as in `claude -p`.
+ */
 function sourceOf(kind: string): PromptSource {
   if (kind === 'composer' || kind === 'bridge') return 'user'
-  if (kind === 'sdk') return 'headless'
+  if (kind === 'sdk' || UNATTENDED.has(kind)) return 'headless'
   return 'other'
+}
+
+/** A person sent it from the prompt, Remote Control or the SDK: only they lift limits. */
+function fromPerson(kind: string): boolean {
+  return kind === 'composer' || kind === 'bridge' || kind === 'sdk'
 }
 
 /** Publishes this session's counts for the other sessions on this machine. */
@@ -523,11 +561,12 @@ async function publish($: Api, now: number): Promise<void> {
   expireAgents(session, now, config.peerTtlMs)
   prune(session, now, config.windowMs)
   try {
-    await $.store.set(PEER_PREFIX + session.id, peerRecord(session, now, config.windowMs))
+    await save($, PEER_PREFIX + session.id, peerRecord(session, now, config.windowMs))
   } catch (error) {
     $.ui.log(`agent-usage-guard could not publish its counts: ${String(error)}`, { to: 'debug' })
   }
   await keepLastActive($)
+  await refreshStatus($)
 }
 
 /**
@@ -540,10 +579,27 @@ async function keepLastActive($: Api): Promise<void> {
   const last = session.loops[MAIN]?.activeAt
   if (!session.id || last === undefined || last === lastActiveKept) return
   try {
-    await $.store.set(LAST_ACTIVE_PREFIX + session.id, last)
+    await save($, LAST_ACTIVE_PREFIX + session.id, last)
     lastActiveKept = last
   } catch (error) {
     $.ui.log(`agent-usage-guard could not store when the session was last active: ${String(error)}`, { to: 'debug' })
+  }
+}
+
+/**
+ * Writes to the store and keeps track of whether writes work: when they stop,
+ * other sessions no longer see this one's counts, and the status says so.
+ */
+async function save($: Api, key: string, value: unknown): Promise<void> {
+  const before = storeFailure
+  try {
+    await $.store.set(key, value)
+    storeFailure = undefined
+  } catch (error) {
+    storeFailure = error instanceof Error ? error.message : String(error)
+    throw error
+  } finally {
+    if ((before === undefined) !== (storeFailure === undefined)) await refreshStatus($)
   }
 }
 
@@ -559,11 +615,19 @@ async function loadPeers($: Api, now: number): Promise<void> {
   }
 }
 
-/** The main context before a prompt, from Claude Code's own figure. */
+/**
+ * The main context before a prompt, from Claude Code's own figure. It has none
+ * from a compaction until the next response, which is how the guard sees a
+ * compaction whose own events never reach it, as on a managed machine.
+ */
 async function readMainContext($: Api): Promise<void> {
   try {
     const usage = await $.session.usage()
     if (usage.context.tokens !== undefined) observeMainContext(session, config, usage.context.tokens)
+    else if (session.loops[MAIN]?.context !== undefined) {
+      observeCompaction(session)
+      await refreshStatus($)
+    }
   } catch {
     // Keep the last figure a response reported.
   }
@@ -585,14 +649,28 @@ async function refreshStatus($: Api): Promise<void> {
   if (!interactive) return
   try {
     const now = await $.clock.now()
-    redrawAt($, statusLineExpiry(session, peers, config, now), now)
-    const text = statusLine(session, peers, config, now)
+    const expiries = [statusLineExpiry(session, peers, config, now), bandExpiry(session, peers, config, now)].filter((t) => t !== undefined)
+    redrawAt($, expiries.length > 0 ? Math.min(...expiries) : undefined, now)
+    await drawBand($, now)
+    const parts = [statusLine(session, peers, config, now), storeFailure === undefined || !config.enabled ? undefined : "store not saving: other sessions can't count this one"]
+    const text = parts.filter((p) => p !== undefined).join(' · ') || undefined
     if (text === lastStatus) return
     lastStatus = text
     $.ui.status(text)
   } catch (error) {
     $.ui.log(`agent-usage-guard could not update its status line: ${String(error)}`, { to: 'debug' })
   }
+}
+
+/** Hands the band its line when it changed; the band redraws from it. */
+async function drawBand($: Api, now: number): Promise<void> {
+  const keys = [...pending.keys()]
+  const asking: Asking = { agents: keys.includes('agents'), context: keys.some((k) => k.startsWith('heavy:')) }
+  const band: Band | null = bandLine(session, peers, config, now, asking) ?? null
+  const drawn = band === null ? undefined : JSON.stringify(band)
+  if (drawn === lastBand) return
+  lastBand = drawn
+  await $.state.set(BAND, band)
 }
 
 /** Redraws the status line at `at`, when something it shows runs out: a quiet session has no event that would. */
@@ -650,17 +728,44 @@ async function journalAnswer($: Api, ask: Ask, asked: Asked, choice?: string): P
  * open is held back at once, and the model makes it again once it is
  * answered. Waiting instead could outlast the hook's time limit.
  */
-async function oneAtATime<T>(key: string, held: () => T, run: () => Promise<T>): Promise<T> {
+async function oneAtATime<T>($: Api, key: string, held: () => T, run: () => Promise<T>): Promise<T> {
   // The check for an open question and the claim on it must not straddle an
   // await, or two parallel calls would each ask.
   if (pending.has(key)) return held()
   const asking = run()
   pending.set(key, asking)
   try {
+    await refreshStatus($)
     return await asking
   } finally {
     pending.delete(key)
+    await refreshStatus($)
   }
+}
+
+/**
+ * Shows what a rule does on made-up state: the real question in the dialog
+ * where someone can answer, else the refusal or the held prompt's reason. The
+ * reply opens by saying it is a simulation, because Claude reads it too.
+ */
+async function simulation($: Api, rule: SimulatedRule, now: number): Promise<string> {
+  const verdict = simulate(rule, config, now, canAsk())
+  const opening = `Simulation of ${rule}`
+  const aside = `${opening}: nothing was held, and none of this applies to the current work.`
+  if (verdict.kind === 'ask') {
+    if (canAsk()) {
+      try {
+        const answer = await $.ui.ask(`Simulation, nothing changes: ${verdict.question}`, { options: verdict.options, header: HEADER })
+        return `${opening}: you answered "${answer}". Nothing was held, nothing changed and no usage was spent.`
+      } catch {
+        // Dismissed, or the dialog could not open: show the question instead.
+      }
+    }
+    return `${aside} The guard would ask:\n\n${verdict.question}\nOptions: ${verdict.options.join(' · ')}`
+  }
+  if (verdict.kind === 'deny') return `${aside} Claude would read this refusal:\n\n${verdict.message}`
+  if (verdict.kind === 'drop') return `${aside} A prompt you send would be held:\n\n${verdict.message}`
+  return `${opening}: with your settings, this rule would not trip.`
 }
 
 /** Compacts the conversation. Returns why it did not, or undefined once it has. */
@@ -668,8 +773,48 @@ async function compact($: Api): Promise<string | undefined> {
   try {
     return (await $.session.compact()).skip
   } catch (error) {
-    return error instanceof Error ? error.message : String(error)
+    // Without the engine's "agent-usage-guard: $.session.compact: Error during compaction: ".
+    return (error instanceof Error ? error.message : String(error)).replace(/^[^:]*: \$?\.?session\.compact: (?:Error during compaction: )?/, '')
   }
+}
+
+/** Whether the prompt reads the same sent again by `$.prompt.submit`, which expands no image or @ mention. */
+function resendable(e: { readonly text: string; readonly attachments?: readonly unknown[] }): boolean {
+  return !e.attachments?.length && !/(?:^|\s)@\S/.test(e.text)
+}
+
+/**
+ * Compacts, then sends the prompt the hook dropped as the user's own words. Claude Code puts a
+ * dropped prompt back in the input box, before or after the first look, so it is taken back out
+ * on both sides of the compaction. A prompt that can't be resent as typed stays there.
+ */
+async function compactThenSend($: Api, text: string, resend: boolean): Promise<void> {
+  const takeBack = async () => {
+    if ((await $.prompt.read()).text === text) await $.prompt.fill({ text: '' }).catch(() => undefined)
+  }
+  if (resend) await takeBack()
+  // Sending at full size after a failed compaction is the one thing the user chose against.
+  const failed = await compact($)
+  if (failed !== undefined) {
+    if (resend) await putBack($, text)
+    $.ui.log(`could not compact (${failed}), so your prompt is back in the input box.`)
+    return
+  }
+  if (!resend) return
+  await takeBack()
+  try {
+    await $.prompt.submit({ text, asUser: true })
+  } catch (error) {
+    await putBack($, text)
+    $.ui.log(`could not send your prompt (${String(error)}), so it is back in the input box.`)
+  }
+}
+
+/** Puts `text` back in the input box, ahead of anything typed since, unless the box holds it already. */
+async function putBack($: Api, text: string): Promise<void> {
+  const typed = (await $.prompt.read()).text
+  if (typed.includes(text)) return
+  await $.prompt.fill({ text: typed ? `${text}\n${typed}` : text }).catch(() => undefined)
 }
 
 /** A verdict on an agent, and the slot it holds when allowed, for `releaseStart`. */
@@ -683,7 +828,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
   const verdict = agentGate(session, peers, config, now, request)
   if (verdict.kind === 'allow') return { verdict, reservedAt: reserveStart(session, now) }
   if (verdict.kind !== 'ask') return { verdict }
-  return oneAtATime<AgentVerdict>('agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
+  return oneAtATime<AgentVerdict>($, 'agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
     const asked = await askUser($, verdict)
     const resolved = asked.unavailable
       ? agentGate(session, peers, config, asked.at, request)
@@ -697,7 +842,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
 
 /** The heavy-context question, one per loop at a time. */
 async function settleHeavy($: Api, ask: Ask, request: ToolRequest): Promise<Verdict> {
-  return oneAtATime(`heavy:${ask.loop}`, () => heldForQuestion('heavy'), async () => {
+  return oneAtATime($, `heavy:${ask.loop}`, () => heldForQuestion('heavy'), async () => {
     const asked = await askUser($, ask, contextBucket(session.loops[ask.loop]?.context))
     if (asked.unavailable) {
       await journalAnswer($, ask, asked)
@@ -718,11 +863,50 @@ function resumeTarget(to: unknown, message: unknown): string | undefined {
   return agent.id
 }
 
+/**
+ * How a question names an agent. Claude picks an agent's name, and the question
+ * shows under the guard's header, so only a plain name is shown, in quotes;
+ * any other is replaced by the start of the agent's id.
+ */
+function agentLabel(id: string): string {
+  const name = session.agents[id]?.name
+  return name !== undefined && PLAIN_NAME.test(name) ? `agent "${name}"` : `agent ${id.slice(0, 8)}`
+}
+
 /** The tool's own arguments, for its fingerprint. */
 function argumentsOf(e: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const args: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(e)) if (!ENVELOPE_KEYS.has(key)) args[key] = value
   return { tool: e.tool, args }
+}
+
+/** The text of a failed request, and the error kind when StopFailure gave one. */
+type Failure = { error?: string; text: string }
+
+/**
+ * Journals a lockout that ended the main turn. StopFailure names the error
+ * kind; where it never arrives, as on a managed machine, the transcript's last
+ * message is the error Claude Code showed.
+ */
+async function journalLockout($: Api, now: number, reported: Failure | undefined): Promise<void> {
+  const failed = reported ?? (await lastMessage($))
+  const kind = failed && lockoutKind(failed.error, failed.text, Object.values(session.limits))
+  if (!kind) return
+  const reading = session.limits[kind]
+  // A current reading's reset time names the window, so the report counts each lockout once.
+  const resets = reading?.resetsAt !== undefined && reading.resetsAt > now ? reading.resetsAt : undefined
+  await journal($, now, { ev: 'lockout', kind, ...(reading ? { pct: reading.percent } : {}), ...(resets === undefined ? {} : { resets }) })
+}
+
+/** The main transcript's last message, when Claude wrote it. */
+async function lastMessage($: Api): Promise<Failure | undefined> {
+  try {
+    const messages = await $.session.messages()
+    const last = Array.isArray(messages) ? messages.at(-1) : undefined
+    return last?.role === 'assistant' ? { text: last.text } : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Journals a refusal the model reads. */
@@ -742,7 +926,7 @@ async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): P
     const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined)) as Omit<JournalRow, 't' | 's'>
     journalCache.rows.push({ t: now, s: session.id.slice(0, 8), ...clean })
     if (journalCache.rows.length > MAX_ROWS_PER_DAY) journalCache.rows.splice(0, journalCache.rows.length - MAX_ROWS_PER_DAY)
-    await $.store.set(key, journalCache.rows)
+    await save($, key, journalCache.rows)
   } catch (error) {
     $.ui.log(`agent-usage-guard could not write its journal: ${String(error)}`, { to: 'debug' })
   }
@@ -765,7 +949,7 @@ async function report($: Api, now: number, days: number): Promise<string> {
     const rows = (await Promise.all(recent.map((k) => $.store.get(k)))).flatMap((v) => (Array.isArray(v) ? v.filter(isJournalRow) : []))
     return formatReport(rows, now, days)
   } catch (error) {
-    return `agent-usage-guard could not read its journal: ${String(error)}`
+    return `Could not read the journal (${String(error)}).`
   }
 }
 

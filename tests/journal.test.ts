@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SESSION_ID, T0, journalRows, start, world } from './harness.ts'
+import { SESSION_ID, T0, endTurn, journalRows, start, world } from './harness.ts'
 
 const DAY = 86_400_000
 
@@ -9,11 +9,17 @@ describe('lockouts and the report', () => {
     const w = world(on)
     await start($, w, false)
     await $.classic.StopFailure({ error: 'rate_limit', error_details: 'API Error: Request rejected (429) · overloaded' } as never)
+    await endTurn($, 'error')
     await $.classic.StopFailure({ error: 'rate_limit', error_details: "Claude usage limit reached. Your limit will reset at 3pm" } as never)
+    await endTurn($, 'error')
     await $.classic.StopFailure({ error: 'server_error', error_details: 'usage limit' } as never)
+    await endTurn($, 'error')
     await $.classic.StopFailure({ error: 'rate_limit', error_details: "You've hit your weekly limit · resets Oct 9" } as never)
+    await endTurn($, 'error')
     await $.classic.StopFailure({ error: 'billing_error', error_details: 'You have reached your monthly spend limit.' } as never)
+    await endTurn($, 'error')
     await $.classic.StopFailure({ error: 'rate_limit', error_details: 'Opus limit reached. Use /model to switch to another model.' } as never)
+    await endTurn($, 'error')
     expect(journalRows(w).map((r) => `${r.ev}:${r.kind}`)).toEqual(['lockout:unknown', 'lockout:seven_day', 'lockout:spend_limit', 'lockout:model'])
   })
 
@@ -23,6 +29,7 @@ describe('lockouts and the report', () => {
     const resetsAt = '2027-01-15T15:00:00.000Z'
     await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt }], changed: ['rateLimits'] } as never)
     await $.classic.StopFailure({ error: 'rate_limit', error_details: "You've hit your session limit · resets 3pm" } as never)
+    await endTurn($, 'error')
     expect(journalRows(w).filter((r) => r.ev === 'lockout')).toEqual([expect.objectContaining({ kind: 'five_hour', pct: 100, resets: Date.parse(resetsAt) })])
   })
 

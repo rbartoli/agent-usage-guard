@@ -10,6 +10,8 @@ export type Rule =
   | 'depth'
   | 'fuse'
   | 'limit-deny'
+  // A wakeup or scheduled job, past the refusal threshold.
+  | 'schedule'
   // Agents, asked when someone can answer.
   | 'concurrency'
   | 'starts'
@@ -78,7 +80,7 @@ export function refuse(
 ): Deny {
   const earlier = state.denials.filter((d) => d.key === key && now - d.at < config.windowMs)
   const n = earlier.length + 1
-  state.denials.push({ at: now, key, agent })
+  state.denials.push({ at: now, key, agent, rule })
   const parts = [base]
   if (n >= 2 && state.reopened) {
     parts.push(

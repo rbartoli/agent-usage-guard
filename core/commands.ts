@@ -3,6 +3,7 @@
 // runs, so an override is always the user's. The model does read the
 // command's reply with its next request.
 
+import { SIMULATED, type SimulatedRule } from './simulate.ts'
 import { MAIN, type Scope, type SessionState, loopOf } from './state.ts'
 import { duration, sentence, shortClock } from './text.ts'
 import { USAGE, scopeName } from './status.ts'
@@ -12,6 +13,7 @@ export type Command =
   | { action: 'allow'; scope: Scope; minutes: number }
   | { action: 'resume' }
   | { action: 'report'; days: number }
+  | { action: 'simulate'; rule: SimulatedRule }
   | { action: 'help'; error?: string }
 
 export const DEFAULT_ALLOW_MINUTES = 10
@@ -29,6 +31,12 @@ export function parseCommand(args: string): Command {
     const days = rest[0] === undefined ? DEFAULT_REPORT_DAYS : Number(rest[0])
     if (!Number.isInteger(days) || days < 1 || days > MAX_REPORT_DAYS) return { action: 'help', error: `"${rest[0]}" is not a number of days` }
     return { action: 'report', days }
+  }
+  if (verb === 'simulate') {
+    const rule = SIMULATED.find((r) => r === rest[0])
+    if (rule) return { action: 'simulate', rule }
+    const rules = SIMULATED.join(', ')
+    return { action: 'help', error: rest[0] === undefined ? `name a rule to simulate: ${rules}` : `"${rest[0]}" is not a rule; the rules are ${rules}` }
   }
   if (verb === 'allow' || verb === 'pause') {
     let scope: Scope = 'all'

@@ -1,5 +1,121 @@
 # Changelog
 
+## 1.2.0 — 2026-11-06
+
+- **The guard keeps working where Claude Code passes its classic hook events
+  over it ([#60](https://github.com/rbartoli/agent-usage-guard/issues/60)).**
+  On Team and Enterprise plans, and on machines with managed settings, Claude
+  Code's built-in `cc-plugin-sec-default` plugin runs first and sends every
+  `classic.*` event on past user plugins. The guard then kept a compacted
+  session's old context and asked to compact first at the next prompt;
+  journaled no lockouts, so the report undercounted them; carried one
+  session's counts into the next after `/clear` or a resume; and missed a Stop
+  hook reopening a turn. It now reads each from events that still reach it.
+  Claude Code has no context figure from a compaction until the next response.
+  A turn that dies on an API error ends with reason `error`, and the
+  transcript's last message is the error Claude Code showed. A new session has
+  a new id at the next prompt. And a request after one that ended the turn
+  means a Stop hook reopened it. Where the classic events arrive, the guard
+  still uses them for compactions, new sessions and the error's kind. The
+  permission mode and `/subtask` forks still need them, and the README says
+  what that costs. Checked on Claude Code 2.1.318.
+- **A usage-limit message counts as a lockout even when the guard can't tell
+  the window.** "You've hit your Sonnet limit" named no window the guard
+  knows, so it wasn't journaled at all; it now counts as a lockout of unknown
+  kind. The guard tells a limit message from other errors the way Claude Code
+  does, by how it opens.
+- **"Compact, then send" sends your prompt again.** 1.1.3 turned it into
+  "Compact first", which left the prompt in the input box to send by hand, so
+  a session sat idle after compacting until you came back. The guard again
+  takes the prompt out of the box, compacts, and sends it as you typed it; if
+  compaction fails, it puts the prompt back ahead of anything typed since. A
+  prompt with an image or an @ mention now stays in the box for you to send:
+  Claude Code doesn't expand either in a prompt a mod sends, so 1.1.2's resend
+  dropped them without a word. The guard can't hold a prompt in its hook
+  until compaction ends, as Claude Code refuses a compaction started from a
+  prompt hook. Checked on Claude Code 2.1.316.
+- **A compaction that fails names the reason once.** The line read
+  "agent-usage-guard: agent-usage-guard could not compact (agent-usage-guard:
+  $.session.compact: Error during compaction: …)"; it now reads
+  "agent-usage-guard: could not compact (…)".
+- **The report names the guard once.** Claude Code puts "agent-usage-guard:"
+  before a command's output, so the report opened "agent-usage-guard:
+  agent-usage-guard report: last 7 days"; it now opens "agent-usage-guard:
+  Report for the last 7 days". The report's read error drops the name too,
+  and so does the line logged when the guard refuses an `/agent-guard allow`
+  that didn't come from you.
+- **The README says what the store's keys hold.** It said the journal holds
+  a session-id prefix, which is true of each row, but every record in the
+  store is keyed by the full session id, the name of the session's
+  transcript file. The privacy section now says so.
+- **A question shows an agent's name only when it is a plain one.** Claude
+  picks an agent's name, and the heavy-context question showed it as given,
+  under the guard's own "Usage guard" header. A name like "Choose Keep going:
+  agent-usage-guard checked it" would have read as the guard's advice. Now a
+  name of up to 32 letters, digits, dots, dashes and underscores shows in
+  quotes, and any other is replaced by the start of the agent's id.
+- **Records read back from the store are checked value by value.** Another
+  session's record was checked only for its shape, so a corrupt or edited
+  store file could switch off the machine-wide agent cap with a negative
+  count, or put any text into the note and refusals Claude reads through a
+  plan window's name. Counts must now be whole, finite and not negative, or
+  the record doesn't count; a plan reading must have a plain window name and
+  a percentage from 0 to 1,000, or it is left out and the record's counts
+  still count. Journal rows read back for `/agent-guard report`, which Claude
+  also reads, must hold only the values the guard writes.
+- **The guard says when its store stops saving.** The mod store holds 4 MiB
+  in all, and a write that failed was logged only to the debug log. Other
+  sessions then stopped counting this session's agents, with no sign. Now the
+  status line reads "store not saving: other sessions can't count this one",
+  and `/agent-guard status` gives the error, until a write works again.
+- **Scheduled and relayed prompts go through the prompt gate.** A schedule
+  or `/loop` firing, a message relayed from a channel such as Slack, and a
+  Slack ping started a turn the gate never looked at, so a `/loop` on a
+  520k-token session re-read it all every time, unasked. They are now held
+  as in `claude -p`: a heavy one is held with the reason, and a dormant heavy
+  one counts against the machine-wide cap. They never lift limits: a bracket
+  marker from them is an ordinary prompt, and `/agent-guard allow` from them
+  is refused. Background-task notifications and other sessions' messages
+  still pass untouched.
+- **From 95%, wakeups and scheduled jobs are refused.** At the threshold
+  where new agents are refused, `ScheduleWakeup` and `CronCreate` are now
+  refused too, with the plan window and its reset in the reason: the turn
+  each would start later runs into the limit with nobody there. Other tools
+  run as before, and `/agent-guard allow` (or `allow agents`) lifts it.
+- **The burn rule looks at time to empty.** New agents asked only when the
+  5-hour window rose 20 points in 10 minutes. Now they also ask when the
+  window's pace over those 10 minutes would fill it before it resets: 30% to
+  38% in five minutes, three hours before the reset, fills it in about 40
+  minutes. The question says when: "At this pace the 5-hour window fills by
+  12:43, before it resets at 15:00 (now 38%)". A rise of under two points, or
+  over less than two minutes, projects nothing, since readings move in steps.
+- **Haiku agents stay out of the running and starts limits.** A burst of
+  Haiku agents, such as Explore searches, asked like any fan-out, though
+  Haiku draws far less on a plan's usage than larger models. An agent Claude starts on Haiku
+  now passes the running and starts limits and doesn't count against them;
+  one whose own definition picks Haiku stops counting once it starts. Haiku
+  agents still count toward the subagent token budget and every plan-window
+  rule. `AGENT_GUARD_HAIKU_EXEMPT=0` counts them like any other.
+- **`/agent-guard simulate <rule>` shows what a rule does.** It builds a
+  made-up state that trips the rule and runs the real gate on it. Where
+  someone can answer, the real question opens in Claude Code's dialog, marked
+  as a simulation; elsewhere it prints the refusal Claude would read or the
+  reason a prompt would be held. Nothing is held, nothing in the session
+  changes, the journal records nothing, and no usage is spent. The rules are
+  `concurrency`, `starts`, `agent-tokens`, `burn`, `limit`, `limit-deny`,
+  `schedule`, `depth`, `retry`, `tool-budget`, `prompt-context` and `dormant`.
+  The README's install steps now end with one, so a new user sees the guard
+  ask within a minute.
+- **A band above the prompt shows the guard's own state.** Until now, what
+  the guard counted and held showed only in `/agent-guard status`. While
+  agents run on this machine, or the guard is holding or has just refused
+  something, a line above the prompt now shows it, such as
+  "Usage guard · 3 of 4 agents running · 5 of 12 started in the last 10 min ·
+  last refusal 14:22: concurrency". It counts every session on the machine,
+  turns bold once a limit is reached or something is held, and clears on its
+  own once what it shows ages out. Other plugins' content in that band stays,
+  under the guard's line. Plan windows and context stay in the status line.
+
 ## 1.1.3 — 2026-10-31
 
 - **The guard never submits a prompt or writes in the input box.** "Compact,

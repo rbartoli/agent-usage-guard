@@ -90,6 +90,7 @@ export type SpawnFacts = {
   kind: AgentKind
   depth: number
   name?: string
+  cheap?: boolean
 }
 
 /**
@@ -106,16 +107,16 @@ export function reserveStart(state: SessionState, now: number): number {
 
 /**
  * Ends a reservation: `agentId` started, or, when it is undefined, the start
- * failed and is not counted. Once no gated agent is starting, the starts none
- * of them claimed are counted.
+ * failed and is not counted. A `cheap` agent started on Haiku and is not
+ * counted either. Once no gated agent is starting, the starts none of them
+ * claimed are counted.
  */
-export function releaseStart(state: SessionState, reservedAt: number, agentId: string | undefined): void {
+export function releaseStart(state: SessionState, reservedAt: number, agentId: string | undefined, cheap = false): void {
   state.pendingStarts = Math.max(0, state.pendingStarts - 1)
-  if (agentId === undefined) {
+  if (agentId !== undefined) delete state.unclaimed[agentId]
+  if (agentId === undefined || cheap) {
     const index = state.starts.indexOf(reservedAt)
     if (index >= 0) state.starts.splice(index, 1)
-  } else {
-    delete state.unclaimed[agentId]
   }
   countUnclaimed(state)
 }
@@ -129,6 +130,7 @@ export function observeSpawn(state: SessionState, now: number, facts: SpawnFacts
     running: true,
     startedAt: now,
     ...(facts.name ? { name: facts.name } : {}),
+    ...(facts.cheap ? { cheap: true } : {}),
   }
 }
 
