@@ -214,7 +214,7 @@ describe('journal', () => {
       { t: NOW - 30 * DAY, s: 'c', ev: 'lockout' },
     ]
     const text = formatReport(rows, NOW, 7)
-    expect(text).toMatch(/^agent-usage-guard report: last 7 days\n10 events from 2 sessions/)
+    expect(text).toMatch(/^Report for the last 7 days\n10 events from 2 sessions/)
     expect(text).toMatch(/Usage-limit lockouts: 1 \(1\.0 per week\)/)
     expect(text).toMatch(/concurrency\s+asks 3: 1 \/ 1 · refusals 0 · held 0/)
     expect(text).toMatch(/retry\s+asks 0: 0 \/ 0 · refusals 1 · held 0/)
@@ -247,6 +247,6 @@ describe('journal', () => {
   })
 
   test('one event from one session over one day reads in the singular', () => {
-    expect(formatReport([{ t: NOW - 60, s: 'a', ev: 'override', rule: 'all' }], NOW, 1)).toMatch(/^agent-usage-guard report: last 1 day\n1 event from 1 session\n/)
+    expect(formatReport([{ t: NOW - 60, s: 'a', ev: 'override', rule: 'all' }], NOW, 1)).toMatch(/^Report for the last 1 day\n1 event from 1 session\n/)
   })
 })

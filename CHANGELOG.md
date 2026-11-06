@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-11-06
 
 - **The guard keeps working where Claude Code passes its classic hook events
   over it ([#60](https://github.com/rbartoli/agent-usage-guard/issues/60)).**
@@ -38,6 +38,12 @@
   "agent-usage-guard: agent-usage-guard could not compact (agent-usage-guard:
   $.session.compact: Error during compaction: …)"; it now reads
   "agent-usage-guard: could not compact (…)".
+- **The report names the guard once.** Claude Code puts "agent-usage-guard:"
+  before a command's output, so the report opened "agent-usage-guard:
+  agent-usage-guard report: last 7 days"; it now opens "agent-usage-guard:
+  Report for the last 7 days". The report's read error drops the name too,
+  and so does the line logged when the guard refuses an `/agent-guard allow`
+  that didn't come from you.
 - **The README says what the store's keys hold.** It said the journal holds
   a session-id prefix, which is true of each row, but every record in the
   store is keyed by the full session id, the name of the session's
@@ -102,8 +108,8 @@
   ask within a minute.
 - **A band above the prompt shows the guard's own state.** Until now, what
   the guard counted and held showed only in `/agent-guard status`. While
-  agents run on this machine, or the guard is asking, holding or has just
-  refused something, a line above the prompt now shows it, such as
+  agents run on this machine, or the guard is holding or has just refused
+  something, a line above the prompt now shows it, such as
   "Usage guard · 3 of 4 agents running · 5 of 12 started in the last 10 min ·
   last refusal 14:22: concurrency". It counts every session on the machine,
   turns bold once a limit is reached or something is held, and clears on its

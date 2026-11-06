@@ -432,7 +432,7 @@ export function register(on: On): void {
       // Only the person lifts limits: another plugin's $.command.run reaches this hook too.
       if (!fromPerson(e.origin.kind)) {
         const from = e.origin.kind === 'plugin' ? `the ${e.origin.name} plugin` : `a ${e.origin.kind} prompt`
-        $.ui.log(`agent-usage-guard refused /${COMMAND} ${e.args.trim()} from ${from}.`)
+        $.ui.log(`refused /${COMMAND} ${e.args.trim()} from ${from}.`)
         return { text: `Only you can lift the guard's limits, and this came from ${from}, so nothing changed. Type /${COMMAND} ${e.args.trim()} to lift them.` }
       }
       const text = applyOverride(session, now, command.scope, command.minutes)
@@ -949,7 +949,7 @@ async function report($: Api, now: number, days: number): Promise<string> {
     const rows = (await Promise.all(recent.map((k) => $.store.get(k)))).flatMap((v) => (Array.isArray(v) ? v.filter(isJournalRow) : []))
     return formatReport(rows, now, days)
   } catch (error) {
-    return `agent-usage-guard could not read its journal: ${String(error)}`
+    return `Could not read the journal (${String(error)}).`
   }
 }
 

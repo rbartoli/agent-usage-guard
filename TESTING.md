@@ -72,3 +72,16 @@ question, filed the journal under the new session id after `/clear`, and worded
 the second refusal in a turn a Stop hook reopened as the user's decision.
 1.2.0-rc.2, without the fix, did none of the four. The demo recording in
 `demo/` reproduces the main path against the real UI and uses a little usage.
+
+Before the 1.2.0 release, 1.2.0-rc.3 ran in real interactive sessions on
+2.1.318 against a scripted API, which spends no usage. With
+`cc-plugin-sec-default` seated and without: at a cap of one agent, the second
+opened the question, and after "Don't start it" the band showed the decline
+and the last refusal; three Haiku agents started without a question; and
+"Compact, then send" compacted once and sent the prompt once. Without it, the
+four checks above passed too; one 429 journaled one lockout, not two; a cron
+prompt that fired at a heavy context was held; each `simulate` rule printed its
+simulation; a read-only store turned the status line to "store not saving";
+and a copy of a real 1.1.3 store read back in `status` and `report`. Claude
+Code's question dialog replaces the prompt area while it is open, so the band's
+"asking you about …" never shows in the terminal.

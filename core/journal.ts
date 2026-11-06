@@ -101,7 +101,7 @@ type RuleCount = { asks: number; allowed: number; declined: number; denials: num
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
   const recent = rows.filter((r) => now - r.t < days * DAY_MS).sort((a, b) => a.t - b.t)
-  const lines = [`agent-usage-guard report: last ${count(days, 'day')}`]
+  const lines = [`Report for the last ${count(days, 'day')}`]
   if (recent.length === 0) {
     lines.push('', 'Nothing recorded yet. The journal fills as the guard asks, refuses, or sees a limit.')
     return lines.join('\n')
