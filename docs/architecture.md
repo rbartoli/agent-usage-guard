@@ -67,7 +67,7 @@ A verdict is one of:
 - `ask`, with a question and options. The adapter puts the question to the
   person and hands the answer to `resolveAgentAsk` (a verdict),
   `resolveHeavyAsk` (a verdict, plus whether to compact after the turn) or
-  `resolvePromptAsk` (a verdict, or `compact-first`), and carries out what
+  `resolvePromptAsk` (a verdict, or `compact-then-send`), and carries out what
   comes back. A prompt allowed after its question still owes Claude the notes
   the gate held back; `promptNotes(...)` returns them. A harness with nobody to
   ask sets `state.canAsk = false`, and the core then refuses instead of asking.
