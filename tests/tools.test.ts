@@ -169,8 +169,9 @@ describe('a Stop hook that reopens the turn', () => {
     const w = world(on, { toolResult: () => ({ result: 'failed', isError: true }) })
     await start($, w, false)
     for (let i = 0; i < 3; i++) await $.tool.call(bash('flaky'))
-    await $.classic.Stop({ stop_hook_active: false } as never)
-    await respond($, w, 10_000)
+    await respond($, w, 10_000) // the model ends the turn
+    await $.classic.Stop({ stop_hook_active: false } as never) // a Stop hook blocks the end
+    await respond($, w, 10_000) // and the turn goes on
     await $.tool.call(bash('flaky'))
     const second = (await $.tool.call(bash('flaky'))) as Record<string, unknown>
     expect(String(second.deny)).toMatch(/A Stop hook reopened this turn, so ending the turn will not clear this\. Tell the user/)

@@ -55,8 +55,8 @@ handler for each is named in brackets.
 | A tool is about to run | `toolGate(...)`, then `observeToolStart` if it runs | `tool.call` |
 | A tool finished | `observeToolResult(state, now, loop, fingerprint, failed)` | `tool.call` after `next`, even if it threw |
 | A prompt is about to be sent | `promptGate(...)` | `prompt.submit` |
-| A request failed | `lockoutKind(error, text, readings)` | `classic.StopFailure` |
-| The conversation compacted | `observeCompaction(state)` | `classic.PostCompact`, `classic.SessionStart` with source `compact` |
+| A request failed | `lockoutKind(error, text, readings)` | `turn.complete` with reason `error`: `classic.StopFailure`'s error kind and text when it arrived, else the transcript's last message |
+| The conversation compacted | `observeCompaction(state)` | `classic.PostCompact`, `classic.SessionStart` with source `compact`, or no context figure from `$.session.usage()` before a prompt |
 
 A verdict is one of:
 
