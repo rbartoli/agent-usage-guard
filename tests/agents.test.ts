@@ -357,6 +357,16 @@ describe('plan-window gate', () => {
     expect(w.questions).toEqual([])
   })
 
+  test('a short burst that would fill the window only hours from now asks nothing', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    await $.session.measure(measure(13) as never)
+    await w.clock.advance(3 * MINUTE)
+    await $.session.measure(measure(15) as never)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.questions).toEqual([])
+  })
+
   test('crossing a threshold is journaled once', async ($, on) => {
     const w = world(on)
     await start($, w, false)

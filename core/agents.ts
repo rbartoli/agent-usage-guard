@@ -224,11 +224,17 @@ export function limitDetail(limit: LimitReading): string {
 /** A rise shorter or smaller than this is too coarse to project a pace from: readings move in steps. */
 const PACE_MIN_MS = 2 * 60_000
 const PACE_MIN_POINTS = 2
+/**
+ * How far ahead a pace is trusted. A few minutes of usage say little about
+ * the hours after, and every new agent checks again, so a pace that holds is
+ * caught as the window fills.
+ */
+const PACE_HORIZON_MS = 60 * 60_000
 
 /**
  * Points the 5-hour window rose within the rolling window, across this
- * machine, and, at the pace of that rise, when it fills if that comes before
- * it resets.
+ * machine, and, at the pace of that rise, when it fills if that comes within
+ * the next hour and before it resets.
  */
 function burn(
   state: SessionState,
@@ -255,7 +261,7 @@ function burn(
   let fullAt: number | undefined
   if (span >= PACE_MIN_MS && rise >= PACE_MIN_POINTS && current.resetsAt !== undefined) {
     const at = current.at + ((100 - current.percent) * span) / rise
-    if (at < current.resetsAt) fullAt = at
+    if (at < current.resetsAt && at - now <= PACE_HORIZON_MS) fullAt = at
   }
   return { points, percent: current.percent, ...(current.resetsAt === undefined ? {} : { resetsAt: current.resetsAt }), ...(fullAt === undefined ? {} : { fullAt }) }
 }
