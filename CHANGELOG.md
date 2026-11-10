@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 — 2026-11-10
 
 - **The burn rule no longer asks over a short burst.** It projected the
   5-hour window's pace over the last 10 minutes all the way to the reset, so
