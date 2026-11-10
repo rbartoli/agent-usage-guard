@@ -828,7 +828,7 @@ async function agentVerdict($: Api, now: number, request: AgentRequest): Promise
   const verdict = agentGate(session, peers, config, now, request)
   if (verdict.kind === 'allow') return { verdict, reservedAt: reserveStart(session, now) }
   if (verdict.kind !== 'ask') return { verdict }
-  return oneAtATime<AgentVerdict>($, 'agents', () => ({ verdict: heldForQuestion('agents') }), async () => {
+  return oneAtATime($, 'agents', (): AgentVerdict => ({ verdict: heldForQuestion('agents') }), async () => {
     const asked = await askUser($, verdict)
     const resolved = asked.unavailable
       ? agentGate(session, peers, config, asked.at, request)

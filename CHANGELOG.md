@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1 — 2026-11-10
+
+- **The burn rule no longer asks over a short burst.** It projected the
+  5-hour window's pace over the last 10 minutes all the way to the reset, so
+  one heavy turn asked for approval at 15% used: 2 points in 3 minutes, three
+  hours before the reset, "fills" the window in two hours, while the window's
+  real pace would have lasted well past it. Now a pace asks only when it fills
+  the window within the next hour, and before it resets. A pace that holds is
+  still caught, since every new agent checks again: at 60% used, 7 points in
+  10 minutes asks.
+
 ## 1.2.0 — 2026-11-06
 
 - **The guard keeps working where Claude Code passes its classic hook events
