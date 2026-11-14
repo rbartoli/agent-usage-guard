@@ -126,6 +126,8 @@ let endedTurn: string | undefined
 /** What StopFailure said of the request that failed, for the end of its turn to journal. */
 let failure: Failure | undefined
 let journalCache: { key: string; rows: JournalRow[] } | undefined
+/** The last journal write; each waits for the one before, so two that start a day's key can't load over each other's row. */
+let journalWrites: Promise<void> = Promise.resolve()
 /** One question per family at a time: calls that trip while it is open are held back. */
 const pending = new Map<string, Promise<unknown>>()
 
@@ -917,14 +919,21 @@ async function journalDenial($: Api, verdict: Deny, tool: string, ctx?: string):
 /** Appends a row to this session's journal key for the day. Never throws. */
 async function journal($: Api, now: number, row: Omit<JournalRow, 't' | 's'>): Promise<void> {
   if (!config.journal || !session.id) return
+  const id = session.id
+  const write = journalWrites.then(() => appendRow($, id, now, row))
+  journalWrites = write
+  await write
+}
+
+async function appendRow($: Api, id: string, now: number, row: Omit<JournalRow, 't' | 's'>): Promise<void> {
   try {
-    const key = journalKey(session.id, now)
+    const key = journalKey(id, now)
     if (journalCache?.key !== key) {
       const stored = await $.store.get(key)
       journalCache = { key, rows: Array.isArray(stored) ? stored.filter(isJournalRow) : [] }
     }
     const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined)) as Omit<JournalRow, 't' | 's'>
-    journalCache.rows.push({ t: now, s: session.id.slice(0, 8), ...clean })
+    journalCache.rows.push({ t: now, s: id.slice(0, 8), ...clean })
     if (journalCache.rows.length > MAX_ROWS_PER_DAY) journalCache.rows.splice(0, journalCache.rows.length - MAX_ROWS_PER_DAY)
     await save($, key, journalCache.rows)
   } catch (error) {
