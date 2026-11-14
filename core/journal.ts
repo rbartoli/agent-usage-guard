@@ -96,7 +96,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
   )
 }
 
-type RuleCount = { asks: number; allowed: number; declined: number; denials: number; drops: number }
+type RuleCount = { asks: number; allowed: number; compacted: number; declined: number; denials: number; drops: number }
 
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
@@ -130,7 +130,7 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
   const perRule = new Map<string, RuleCount>()
   const bump = (rule: string | undefined, field: keyof RuleCount): void => {
     const key = rule ?? 'unknown'
-    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, declined: 0, denials: 0, drops: 0 }
+    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, compacted: 0, declined: 0, denials: 0, drops: 0 }
     entry[field] += 1
     perRule.set(key, entry)
   }
@@ -140,14 +140,14 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
     else if (row.ev === 'drop') bump(row.rule, 'drops')
     // A question that could not be shown was neither allowed nor declined.
     else if (row.ev === 'answer' && row.answer !== 'unavailable') {
-      bump(row.rule, row.answer === 'allow' || row.answer === 'compact' ? 'allowed' : 'declined')
+      bump(row.rule, row.answer === 'allow' ? 'allowed' : row.answer === 'compact' ? 'compacted' : 'declined')
     }
   }
   if (perRule.size > 0) {
-    lines.push('', 'By rule (asks: allowed / declined · refusals to the model · prompts held)')
+    lines.push('', 'By rule (asks: allowed / compacted / declined · refusals to the model · prompts held)')
     const width = Math.max(...[...perRule.keys()].map((k) => k.length))
     for (const [rule, c] of [...perRule].sort((a, b) => total(b[1]) - total(a[1]))) {
-      lines.push(`  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.declined} · refusals ${c.denials} · held ${c.drops}`)
+      lines.push(`  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.compacted} / ${c.declined} · refusals ${c.denials} · held ${c.drops}`)
     }
   }
 

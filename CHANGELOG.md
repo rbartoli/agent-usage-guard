@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **The report no longer loses a question asked during a parallel batch of
+  agents.** When a session's first journal write of the day started while
+  another was under way, as when the agent question opens and the agents
+  held behind it are refused at the same moment, each loaded the day's rows
+  and the last load wrote over the first's row. The question was lost and
+  its answer kept, so a 30-day report showed concurrency with 7 asks and 13
+  answers. Journal writes now run one after another.
+- **The report counts "Compact, then send" apart from "send anyway".** Both
+  were counted as allowed, so a question that led you to compact read as one
+  you waved through. Each rule now shows `allowed / compacted / declined`.
+
 ## 1.2.1 — 2026-11-10
 
 - **The burn rule no longer asks over a short burst.** It projected the
