@@ -204,6 +204,32 @@ describe('agent gate', () => {
     await spawn($, w)
     expect(w.questions[0]).toMatch(/subagents processed 1\.2M tokens in the last 10 min \(limit 1M\)/i)
   })
+  test('an allowed subagent token budget stays lifted for an hour, through a later burst', async ($, on) => {
+    const w = world(on, { answers: ['Allow', 'Allow'] })
+    await start($, w, true)
+    const burst = async (): Promise<Record<string, unknown>> => {
+      const agent = await spawn($, w)
+      await respond($, w, 6_000_000, String(agent.agentId))
+      await respond($, w, 6_000_000, String(agent.agentId))
+      await $.turn.complete({ turnId: 'x', answer: '', durationMs: 1, isAborted: false, reason: 'answer', agentId: String(agent.agentId) } as never)
+      return agent
+    }
+    await burst()
+    expect((await burst()).agentId).toBeDefined()
+    expect(w.questions).toHaveLength(1)
+    expect(w.questions[0]).toMatch(/subagents processed 12M tokens in the last 10 min \(limit 10M\)\. Allowing lifts this limit until 13:00\./i)
+    await w.clock.advance(30 * MINUTE)
+    await burst()
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.questions).toHaveLength(1)
+    await w.clock.advance(31 * MINUTE)
+    await burst()
+    await spawn($, w)
+    expect(w.questions).toHaveLength(2)
+    const asks = journalRows(w).filter((r) => r.ev === 'ask')
+    expect(asks).toEqual([expect.objectContaining({ rule: 'agent-tokens', tok: '10-15M' }), expect.objectContaining({ rule: 'agent-tokens', tok: '10-15M' })])
+  })
+
   test('a store that stops saving shows in the status line and the status, until a save works again', async ($, on) => {
     const w = world(on)
     await start($, w, true)

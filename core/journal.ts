@@ -25,6 +25,8 @@ export type JournalRow = {
   answer?: string
   tool?: string
   ctx?: string
+  /** For an agent question: the subagent tokens it counted, as a bucket. */
+  tok?: string
   /** Plan-window percentage, for `limit`, `note` and `lockout`. */
   pct?: number
   kind?: string
@@ -64,6 +66,7 @@ export function splitJournalKeys(keys: readonly string[], now: number, days: num
 const EVENTS: ReadonlySet<string> = new Set(['ask', 'answer', 'deny', 'drop', 'override', 'limit', 'note', 'lockout'])
 const ANSWERS: ReadonlySet<string> = new Set(['allow', 'compact', 'refuse', 'cancel', 'dismiss', 'unavailable'])
 const BUCKETS: ReadonlySet<string> = new Set(['<150k', '150-300k', '300-400k', '400-500k', '>=500k'])
+const TOKEN_BUCKETS: ReadonlySet<string> = new Set(['<10M', '10-15M', '15-20M', '20-30M', '30-50M', '50-100M', '>=100M'])
 /** Rule names, override scopes and thresholds such as `80%`. */
 const RULE = /^[a-z0-9%-]{1,32}$/
 /** Tool names, MCP ones included: `mcp__github__create_issue`. */
@@ -89,6 +92,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
     optional('answer', oneOf(ANSWERS)) &&
     optional('tool', text(TOOL)) &&
     optional('ctx', oneOf(BUCKETS)) &&
+    optional('tok', oneOf(TOKEN_BUCKETS)) &&
     optional('kind', text(WINDOW_KIND)) &&
     optional('pct', finite) &&
     optional('resets', finite) &&
@@ -161,6 +165,9 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
 
   const contexts = countBy(recent.filter((r) => r.ctx), (r) => r.ctx ?? '')
   if (contexts.size > 0) lines.push(`Context when it acted: ${[...contexts].map(([k, n]) => `${k} ${n}`).join(', ')}`)
+
+  const agentTokens = countBy(recent.filter((r) => r.ev === 'ask' && r.tok), (r) => r.tok ?? '')
+  if (agentTokens.size > 0) lines.push(`Subagent tokens when it asked: ${[...agentTokens].map(([k, n]) => `${k} ${n}`).join(', ')}`)
 
   const overrides = recent.filter((r) => r.ev === 'override')
   if (overrides.length > 0) lines.push(`Overrides: ${overrides.length} (${[...countBy(overrides, (r) => r.rule ?? 'all')].map(([k, n]) => `${k} ${n}`).join(', ')})`)

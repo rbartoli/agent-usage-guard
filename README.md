@@ -60,7 +60,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | | New agents need approval when the 5-hour window's pace over the last 10 minutes would fill it within the hour, before it resets | at least 2 points over 2 min | asks |
 | Agents | Agents running at once, across every session on this machine | 4 | asks |
 | | Agents started or resumed per 10 minutes, across this machine | 12 | asks |
-| | Tokens processed by subagents per 10 minutes, across this machine | 10M | asks |
+| | Tokens processed by subagents per 10 minutes, across this machine; an approval lasts an hour | 10M | asks |
 | | Subagents may not start their own agents | depth 1 | refuses |
 | Context | Claude is told once to keep the turn bounded | 300k tokens | adds a note to the prompt |
 | | A prompt that would re-read this much context | 500k tokens | asks: compact then send, send anyway, or cancel |

@@ -23,6 +23,12 @@ export function isHaiku(model: string | undefined): boolean {
 }
 
 const AGENT_ALLOW = 'Allow'
+/**
+ * How long an approval of the subagent token budget lasts. A busy hour brings
+ * one burst after another, and asking again at each burst only asks the same
+ * question: over 30 days of use, 29 such questions were all allowed.
+ */
+const AGENT_TOKENS_LIFT_MS = 60 * 60_000
 const AGENT_REFUSE = "Don't start it"
 
 export function agentGate(
@@ -152,7 +158,8 @@ function agentTrips(
       rule: 'agent-tokens',
       detail: `subagents processed ${tokens(processed)} tokens in the last ${span} (limit ${tokens(config.agentTokensMax)})`,
       leaseKey: 'agent-tokens',
-      leaseUntil: until,
+      leaseUntil: now + AGENT_TOKENS_LIFT_MS,
+      tokens: processed,
     })
   }
 
