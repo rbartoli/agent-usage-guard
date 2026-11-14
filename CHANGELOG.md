@@ -542,6 +542,34 @@ review, the README demo recordings and a quality pass:
   to expire. The two hard-refusal states - a burning agent fuse and the attempt
   that trips it - still deny with exit 2 and record inline.
 
+## 0.1.0 — 2026-07-24 to 2026-07-27
+
+- Shipped as `github.com/rbartoli/agent-usage-guard`: public, MIT, ~1,300 lines, five
+  protections (rate-limit circuit breaker, real agent budget, context gates, bounded
+  `/research`, tool-error fuse). Retracted the same day — the guard's identical repeated
+  block messages caused model retry loops, potentially net-wasting tokens. Re-release gated
+  on the loop fix.
+- Block-retry loop fixed (2026-07-25) with an escalating denial ladder per
+  (session, tool-input-hash): rung 1 states the reason, rung 2 asks for something different,
+  rung 3+ says to end the turn. A 5th denial of the same call trips a session-wide agent fuse
+  (10-minute cooldown). Every message embeds an attempt number and wall clock so no two block
+  texts are byte-identical.
+- Nested-spawn enforcement verified against the live hook docs and an empirical test: parent
+  `PreToolUse` hooks do not fire on subagent tool calls by design, so the nested-agent block
+  never triggered at the nested layer, and `SubagentStart` cannot block at all (exit 2 is
+  stderr-only). Superseded 2026-07-27: `PreToolUse` does fire on tool calls issued inside a
+  subagent on Claude Code 2.1.220, and detection was rebuilt on the `agent_id`/`agent_type`
+  hook fields, making the nested-agent block and the per-window subagent-context ceiling live
+  code. `/subtask` and forked-skill launches still bypass `UserPromptSubmit`,
+  `UserPromptExpansion` and `PreToolUse` entirely — the native `deny: Agent(...)` rule stays
+  the backstop for those.
+- Test and release infrastructure grown to 124 tests, run as real hook processes against real
+  state files; CI compiles every shipped file, runs the linter, validates every JSON manifest
+  and the plugin contract, runs the suite across six Python versions, and rejects
+  branch-aware coverage below 90%. A mutation-smoke check requires all six targeted mutants to
+  be killed. The live install moved from nine hand-written hook entries in the user's own
+  settings to a marketplace plugin, so the packaging path is exercised end to end.
+
 ## 0.2.0 — 2026-07-27
 
 - Recalibrate the default agent budgets for real-world parallel work: four
