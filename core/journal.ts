@@ -25,6 +25,8 @@ export type JournalRow = {
   answer?: string
   tool?: string
   ctx?: string
+  /** For an agent question: the subagent tokens it counted, as a bucket. */
+  tok?: string
   /** Plan-window percentage, for `limit`, `note` and `lockout`. */
   pct?: number
   kind?: string
@@ -64,6 +66,7 @@ export function splitJournalKeys(keys: readonly string[], now: number, days: num
 const EVENTS: ReadonlySet<string> = new Set(['ask', 'answer', 'deny', 'drop', 'override', 'limit', 'note', 'lockout'])
 const ANSWERS: ReadonlySet<string> = new Set(['allow', 'compact', 'refuse', 'cancel', 'dismiss', 'unavailable'])
 const BUCKETS: ReadonlySet<string> = new Set(['<150k', '150-300k', '300-400k', '400-500k', '>=500k'])
+const TOKEN_BUCKETS: ReadonlySet<string> = new Set(['<10M', '10-15M', '15-20M', '20-30M', '30-50M', '50-100M', '>=100M'])
 /** Rule names, override scopes and thresholds such as `80%`. */
 const RULE = /^[a-z0-9%-]{1,32}$/
 /** Tool names, MCP ones included: `mcp__github__create_issue`. */
@@ -89,6 +92,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
     optional('answer', oneOf(ANSWERS)) &&
     optional('tool', text(TOOL)) &&
     optional('ctx', oneOf(BUCKETS)) &&
+    optional('tok', oneOf(TOKEN_BUCKETS)) &&
     optional('kind', text(WINDOW_KIND)) &&
     optional('pct', finite) &&
     optional('resets', finite) &&
@@ -96,7 +100,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
   )
 }
 
-type RuleCount = { asks: number; allowed: number; declined: number; denials: number; drops: number }
+type RuleCount = { asks: number; allowed: number; compacted: number; declined: number; denials: number; drops: number }
 
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
@@ -130,7 +134,7 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
   const perRule = new Map<string, RuleCount>()
   const bump = (rule: string | undefined, field: keyof RuleCount): void => {
     const key = rule ?? 'unknown'
-    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, declined: 0, denials: 0, drops: 0 }
+    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, compacted: 0, declined: 0, denials: 0, drops: 0 }
     entry[field] += 1
     perRule.set(key, entry)
   }
@@ -140,14 +144,14 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
     else if (row.ev === 'drop') bump(row.rule, 'drops')
     // A question that could not be shown was neither allowed nor declined.
     else if (row.ev === 'answer' && row.answer !== 'unavailable') {
-      bump(row.rule, row.answer === 'allow' || row.answer === 'compact' ? 'allowed' : 'declined')
+      bump(row.rule, row.answer === 'allow' ? 'allowed' : row.answer === 'compact' ? 'compacted' : 'declined')
     }
   }
   if (perRule.size > 0) {
-    lines.push('', 'By rule (asks: allowed / declined · refusals to the model · prompts held)')
+    lines.push('', 'By rule (asks: allowed / compacted / declined · refusals to the model · prompts held)')
     const width = Math.max(...[...perRule.keys()].map((k) => k.length))
     for (const [rule, c] of [...perRule].sort((a, b) => total(b[1]) - total(a[1]))) {
-      lines.push(`  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.declined} · refusals ${c.denials} · held ${c.drops}`)
+      lines.push(`  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.compacted} / ${c.declined} · refusals ${c.denials} · held ${c.drops}`)
     }
   }
 
@@ -161,6 +165,9 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
 
   const contexts = countBy(recent.filter((r) => r.ctx), (r) => r.ctx ?? '')
   if (contexts.size > 0) lines.push(`Context when it acted: ${[...contexts].map(([k, n]) => `${k} ${n}`).join(', ')}`)
+
+  const agentTokens = countBy(recent.filter((r) => r.ev === 'ask' && r.tok), (r) => r.tok ?? '')
+  if (agentTokens.size > 0) lines.push(`Subagent tokens when it asked: ${[...agentTokens].map(([k, n]) => `${k} ${n}`).join(', ')}`)
 
   const overrides = recent.filter((r) => r.ev === 'override')
   if (overrides.length > 0) lines.push(`Overrides: ${overrides.length} (${[...countBy(overrides, (r) => r.rule ?? 'all')].map(([k, n]) => `${k} ${n}`).join(', ')})`)

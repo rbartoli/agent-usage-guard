@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SESSION_ID, T0, endTurn, journalRows, start, world } from './harness.ts'
+import { SESSION_ID, T0, endTurn, journalRows, spawn, start, world } from './harness.ts'
 
 const DAY = 86_400_000
 
@@ -70,6 +70,18 @@ describe('lockouts and the report', () => {
     })
     await start($, w, false)
     expect([...w.store.keys()].sort()).toEqual(['journal:2027-01-10:recent', 'last-active:recent', 'peer:alive'])
+  })
+
+  test('a question asked while held agents are refused keeps its row in a new day\'s journal', async ($, on) => {
+    const w = world(on, { answers: ['Allow'] })
+    await start($, w, true)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    expect(journalRows(w)).toEqual([])
+    await Promise.all([spawn($, w), spawn($, w), spawn($, w)])
+    const rows = journalRows(w).map((r) => `${r.ev}:${r.rule}`)
+    expect(rows.filter((r) => r === 'ask:concurrency')).toHaveLength(1)
+    expect(rows.filter((r) => r === 'answer:concurrency')).toHaveLength(1)
+    expect(rows.filter((r) => r === 'deny:asking')).toHaveLength(2)
   })
 
   test('a journal row stores the rule and a context bucket, never the prompt', async ($, on) => {

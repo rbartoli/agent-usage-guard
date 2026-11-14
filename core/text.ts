@@ -68,6 +68,18 @@ export function contextBucket(n: number | undefined): string | undefined {
   return '>=500k'
 }
 
+/** Coarse bucket of the subagent tokens an agent question counted, never an exact figure. */
+export function agentTokensBucket(n: number | undefined): string | undefined {
+  if (n === undefined) return undefined
+  if (n < 10_000_000) return '<10M'
+  if (n < 15_000_000) return '10-15M'
+  if (n < 20_000_000) return '15-20M'
+  if (n < 30_000_000) return '20-30M'
+  if (n < 50_000_000) return '30-50M'
+  if (n < 100_000_000) return '50-100M'
+  return '>=100M'
+}
+
 /** FNV-1a over the text, as 13 base-36 digits. Identifies a call without storing it. */
 export function fingerprint(text: string): string {
   let hash = 0xcbf29ce484222325n

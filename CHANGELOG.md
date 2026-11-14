@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- **Allowing the subagent token budget lasts an hour.** It lasted 10
+  minutes, the rule's own window, so a busy hour of agents asked again at
+  each burst: over 30 days of use the question came 29 times and was allowed
+  every time, 10 of them in one afternoon. With the same bursts, an hour's
+  approval would have asked 18 times. The other agent limits still apply
+  meanwhile. The journal now records how many subagent tokens each agent
+  question counted, as a bucket such as `10-15M`, and the report shows them,
+  so the 10M default can be set from data.
+- **The report no longer loses a question asked during a parallel batch of
+  agents.** When a session's first journal write of the day started while
+  another was under way, as when the agent question opens and the agents
+  held behind it are refused at the same moment, each loaded the day's rows
+  and the last load wrote over the first's row. The question was lost and
+  its answer kept, so a 30-day report showed concurrency with 7 asks and 13
+  answers. Journal writes now run one after another.
+- **The report counts "Compact, then send" apart from "send anyway".** Both
+  were counted as allowed, so a question that led you to compact read as one
+  you waved through. Each rule now shows `allowed / compacted / declined`.
+
 ## 1.2.1 — 2026-11-10
 
 - **The burn rule no longer asks over a short burst.** It projected the
@@ -520,6 +541,34 @@ review, the README demo recordings and a quality pass:
   dialog is open. That reclaims the orphaned reservation instead of leaving it
   to expire. The two hard-refusal states - a burning agent fuse and the attempt
   that trips it - still deny with exit 2 and record inline.
+
+## 0.1.0 — 2026-07-24 to 2026-07-27
+
+- Shipped as `github.com/rbartoli/agent-usage-guard`: public, MIT, ~1,300 lines, five
+  protections (rate-limit circuit breaker, real agent budget, context gates, bounded
+  `/research`, tool-error fuse). Retracted the same day — the guard's identical repeated
+  block messages caused model retry loops, potentially net-wasting tokens. Re-release gated
+  on the loop fix.
+- Block-retry loop fixed (2026-07-25) with an escalating denial ladder per
+  (session, tool-input-hash): rung 1 states the reason, rung 2 asks for something different,
+  rung 3+ says to end the turn. A 5th denial of the same call trips a session-wide agent fuse
+  (10-minute cooldown). Every message embeds an attempt number and wall clock so no two block
+  texts are byte-identical.
+- Nested-spawn enforcement verified against the live hook docs and an empirical test: parent
+  `PreToolUse` hooks do not fire on subagent tool calls by design, so the nested-agent block
+  never triggered at the nested layer, and `SubagentStart` cannot block at all (exit 2 is
+  stderr-only). Superseded 2026-07-27: `PreToolUse` does fire on tool calls issued inside a
+  subagent on Claude Code 2.1.220, and detection was rebuilt on the `agent_id`/`agent_type`
+  hook fields, making the nested-agent block and the per-window subagent-context ceiling live
+  code. `/subtask` and forked-skill launches still bypass `UserPromptSubmit`,
+  `UserPromptExpansion` and `PreToolUse` entirely — the native `deny: Agent(...)` rule stays
+  the backstop for those.
+- Test and release infrastructure grown to 124 tests, run as real hook processes against real
+  state files; CI compiles every shipped file, runs the linter, validates every JSON manifest
+  and the plugin contract, runs the suite across six Python versions, and rejects
+  branch-aware coverage below 90%. A mutation-smoke check requires all six targeted mutants to
+  be killed. The live install moved from nine hand-written hook entries in the user's own
+  settings to a marketplace plugin, so the packaging path is exercised end to end.
 
 ## 0.2.0 — 2026-07-27
 

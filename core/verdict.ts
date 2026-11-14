@@ -34,6 +34,8 @@ export type Trip = {
   detail: string
   leaseKey: string
   leaseUntil: number
+  /** For `agent-tokens`: the subagent tokens it counted, for the journal's bucket. */
+  tokens?: number
 }
 
 export type Family = 'agents' | 'heavy' | 'prompt'
