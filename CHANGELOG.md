@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Allowing the subagent token budget lasts an hour.** It lasted 10
+  minutes, the rule's own window, so a busy hour of agents asked again at
+  each burst: over 30 days of use the question came 29 times and was allowed
+  every time, 10 of them in one afternoon. With the same bursts, an hour's
+  approval would have asked 18 times. The other agent limits still apply
+  meanwhile. The journal now records how many subagent tokens each agent
+  question counted, as a bucket such as `10-15M`, and the report shows them,
+  so the 10M default can be set from data.
 - **The report no longer loses a question asked during a parallel batch of
   agents.** When a session's first journal write of the day started while
   another was under way, as when the agent question opens and the agents

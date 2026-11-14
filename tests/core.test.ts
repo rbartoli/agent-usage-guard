@@ -210,13 +210,15 @@ describe('journal', () => {
       { t: NOW - DAY, s: 'b', ev: 'answer', rule: 'concurrency', answer: 'unavailable' },
       { t: NOW - DAY, s: 'b', ev: 'ask', rule: 'dormant', ctx: '150-300k' },
       { t: NOW - DAY, s: 'b', ev: 'answer', rule: 'dormant', answer: 'compact' },
+      { t: NOW - DAY, s: 'b', ev: 'ask', rule: 'agent-tokens', tok: '20-30M' },
       { t: NOW - 3600, s: 'b', ev: 'deny', rule: 'retry', tool: 'Bash', n: 3 },
       { t: NOW - 3600, s: 'b', ev: 'limit', kind: 'five_hour', pct: 81, rule: '80%' },
       { t: NOW - 60, s: 'b', ev: 'override', rule: 'agents' },
       { t: NOW - 30 * DAY, s: 'c', ev: 'lockout' },
     ]
     const text = formatReport(rows, NOW, 7)
-    expect(text).toMatch(/^Report for the last 7 days\n12 events from 2 sessions/)
+    expect(text).toMatch(/^Report for the last 7 days\n13 events from 2 sessions/)
+    expect(text).toMatch(/Subagent tokens when it asked: 20-30M 1/)
     expect(text).toMatch(/Usage-limit lockouts: 1 \(1\.0 per week\)/)
     expect(text).toMatch(/By rule \(asks: allowed \/ compacted \/ declined · refusals to the model · prompts held\)/)
     expect(text).toMatch(/concurrency\s+asks 3: 1 \/ 0 \/ 1 · refusals 0 · held 0/)

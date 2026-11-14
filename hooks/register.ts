@@ -24,6 +24,7 @@ import {
   type ToolRequest,
   type Verdict,
   agentGate,
+  agentTokensBucket,
   applyOverride,
   bandExpiry,
   bandLine,
@@ -701,7 +702,8 @@ type Asked = { answer: string | undefined; unavailable: boolean; at: number }
  * ended.
  */
 async function askUser($: Api, ask: Ask, ctx?: string): Promise<Asked> {
-  await journal($, await $.clock.now(), { ev: 'ask', rule: ask.trips[0]?.rule, ctx })
+  const tok = agentTokensBucket(ask.trips.find((t) => t.tokens !== undefined)?.tokens)
+  await journal($, await $.clock.now(), { ev: 'ask', rule: ask.trips[0]?.rule, ctx, tok })
   let answer: string | undefined
   let unavailable = false
   try {
