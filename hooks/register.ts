@@ -207,7 +207,7 @@ export function register(on: On): void {
           ...(r.resetsAt ? { resetsAt: Date.parse(r.resetsAt) } : {}),
         }))
         for (const { reading, threshold } of observeLimits(session, config, readings)) {
-          await journal($, now, { ev: 'limit', kind: reading.kind, pct: reading.percent, rule: `${threshold}%` })
+          await journal($, now, { ev: 'limit', kind: reading.kind, pct: reading.percent, rule: `${threshold}%`, resets: reading.resetsAt })
         }
         await publish($, now)
       }

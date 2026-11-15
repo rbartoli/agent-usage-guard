@@ -212,7 +212,7 @@ describe('journal', () => {
       { t: NOW - DAY, s: 'b', ev: 'answer', rule: 'dormant', answer: 'compact' },
       { t: NOW - DAY, s: 'b', ev: 'ask', rule: 'agent-tokens', tok: '20-30M' },
       { t: NOW - 3600, s: 'b', ev: 'deny', rule: 'retry', tool: 'Bash', n: 3 },
-      { t: NOW - 3600, s: 'b', ev: 'limit', kind: 'five_hour', pct: 81, rule: '80%' },
+      { t: NOW - 3600, s: 'b', ev: 'limit', kind: 'five_hour', pct: 81, rule: '80%', resets: NOW + 3600 },
       { t: NOW - 60, s: 'b', ev: 'override', rule: 'agents' },
       { t: NOW - 30 * DAY, s: 'c', ev: 'lockout' },
     ]
@@ -220,13 +220,69 @@ describe('journal', () => {
     expect(text).toMatch(/^Report for the last 7 days\n13 events from 2 sessions/)
     expect(text).toMatch(/Subagent tokens when it asked: 20-30M 1/)
     expect(text).toMatch(/Usage-limit lockouts: 1 \(1\.0 per week\)/)
-    expect(text).toMatch(/By rule \(asks: allowed \/ compacted \/ declined · refusals to the model · prompts held\)/)
-    expect(text).toMatch(/concurrency\s+asks 3: 1 \/ 0 \/ 1 · refusals 0 · held 0/)
-    expect(text).toMatch(/dormant\s+asks 1: 0 \/ 1 \/ 0 · refusals 0 · held 0/)
-    expect(text).toMatch(/retry\s+asks 0: 0 \/ 0 \/ 0 · refusals 1 · held 0/)
+    expect(text).toMatch(/By rule \(asks: allowed \/ compacted \/ declined \/ no answer · refusals to the model · prompts held\)/)
+    // The question that could not be shown, and the one still open, count as no answer.
+    expect(text).toMatch(/concurrency\s+asks 3: 1 \/ 0 \/ 1 \/ 1 · refusals 0 · held 0/)
+    expect(text).toMatch(/agent-tokens\s+asks 1: 0 \/ 0 \/ 0 \/ 1 · refusals 0 · held 0/)
+    expect(text).toMatch(/dormant\s+asks 1: 0 \/ 1 \/ 0 \/ 0 · refusals 0 · held 0/)
+    expect(text).toMatch(/retry\s+asks 0: 0 \/ 0 \/ 0 \/ 0 · refusals 1 · held 0/)
     expect(text).toMatch(/Refusals at rung 3 or later: 1/)
-    expect(text).toMatch(/Limit crossings: 5-hour 80% ×1/)
+    expect(text).toMatch(/Plan windows past a threshold: 5-hour 80% ×1\n/)
     expect(text).toMatch(/Overrides: 1 \(agents 1\)/)
+  })
+
+  test('an answer whose question row was lost still counts its question', () => {
+    // Before 1.2.2 two journal writes at once could drop the question and keep the answer.
+    const rows: JournalRow[] = [
+      { t: NOW - 3600, s: 'a', ev: 'deny', rule: 'asking', tool: 'Agent' },
+      { t: NOW - 3500, s: 'a', ev: 'answer', rule: 'concurrency', answer: 'allow' },
+      { t: NOW - 600, s: 'a', ev: 'ask', rule: 'concurrency' },
+      { t: NOW - 500, s: 'a', ev: 'answer', rule: 'concurrency', answer: 'allow' },
+    ]
+    expect(formatReport(rows, NOW, 7)).toMatch(/concurrency\s+asks 2: 2 \/ 0 \/ 0 \/ 0/)
+  })
+
+  test('a lockout list shorter than the count says it is the latest', () => {
+    const rows: JournalRow[] = Array.from({ length: 6 }, (_, i) => ({ t: NOW - (i + 1) * DAY, s: 'a', ev: 'lockout', kind: 'five_hour', resets: NOW - i * DAY }))
+    const text = formatReport(rows, NOW, 30)
+    expect(text).toMatch(/Usage-limit lockouts: 6 \(1\.4 per week\), the latest 5:\n/)
+    expect(text.match(/^ {2}\d{4}-\d\d-\d\d \d\d:\d\d · 5-hour window$/gm)).toHaveLength(5)
+    expect(formatReport(rows.slice(0, 5), NOW, 30)).toMatch(/Usage-limit lockouts: 5 \(1\.2 per week\)\n/)
+  })
+
+  test('buckets read in range order, not by count', () => {
+    const rows: JournalRow[] = [
+      { t: NOW - 60, s: 'a', ev: 'ask', rule: 'dormant', ctx: '>=500k' },
+      { t: NOW - 50, s: 'a', ev: 'ask', rule: 'dormant', ctx: '300-400k' },
+      { t: NOW - 40, s: 'a', ev: 'ask', rule: 'dormant', ctx: '300-400k' },
+      { t: NOW - 30, s: 'a', ev: 'ask', rule: 'dormant', ctx: '<150k' },
+      { t: NOW - 20, s: 'a', ev: 'ask', rule: 'agent-tokens', tok: '>=100M' },
+      { t: NOW - 10, s: 'a', ev: 'ask', rule: 'agent-tokens', tok: '10-15M' },
+      { t: NOW - 10, s: 'a', ev: 'ask', rule: 'agent-tokens', tok: '10-15M' },
+      { t: NOW - 5, s: 'a', ev: 'ask', rule: 'agent-tokens', tok: '<10M' },
+    ]
+    const text = formatReport(rows, NOW, 7)
+    expect(text).toMatch(/Context when it acted: <150k 1, 300-400k 2, >=500k 1\n/)
+    expect(text).toMatch(/Subagent tokens when it asked: <10M 1, 10-15M 2, >=100M 1\n/)
+  })
+
+  test('limit rows count once per plan window, and rows that name no window are left out', () => {
+    const limit = (ago: number, s: string, kind: string, rule: string, resets?: number): JournalRow => ({ t: NOW - ago, s, ev: 'limit', kind, rule, ...(resets ? { resets } : {}) })
+    const rows: JournalRow[] = [
+      // Before the journal named the window, every new session recorded the threshold it saw.
+      limit(5 * DAY, 'a', 'seven_day', '80%'),
+      limit(5 * DAY - 60, 'b', 'seven_day', '80%'),
+      // One weekly window seen by three sessions, then the next week's.
+      limit(3 * DAY, 'c', 'seven_day', '80%', NOW + DAY),
+      limit(2 * DAY, 'd', 'seven_day', '80%', NOW + DAY),
+      limit(2 * DAY, 'd', 'seven_day', '95%', NOW + DAY),
+      limit(DAY, 'e', 'seven_day', '80%', NOW + DAY),
+      limit(3600, 'f', 'five_hour', '80%', NOW + 3600),
+    ]
+    const text = formatReport(rows, NOW, 7)
+    expect(text).toMatch(/Plan windows past a threshold: weekly 80% ×1, weekly 95% ×1, 5-hour 80% ×1 \(from \d{4}-\d\d-\d\d \d\d:\d\d; 2 rows that don't name the window left out\)\n/)
+    // Only rows that name no window: nothing exact to count, and the report says why.
+    expect(formatReport(rows.slice(0, 1), NOW, 7)).toMatch(/Plan windows past a threshold: none counted, 1 row that doesn't name the window left out\n/)
   })
 
   test('lockouts count once per locked window, however many sessions and retries hit it', () => {
