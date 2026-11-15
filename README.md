@@ -61,7 +61,7 @@ And it's not just me: [339 subagents from a single prompt](https://www.reddit.co
 | Agents | Agents running at once, across every session on this machine | 4 | asks |
 | | Agents started or resumed per 10 minutes, across this machine | 12 | asks |
 | | Tokens processed by subagents per 10 minutes, across this machine; an approval lasts an hour | 10M | asks |
-| | Subagents may not start their own agents | depth 1 | refuses |
+| | A teammate, or an agent under one, may not start agents of its own; Claude Code's own nesting limit covers every other agent (see *Native limits still matter*) | depth 1 | refuses |
 | Context | Claude is told once to keep the turn bounded | 300k tokens | adds a note to the prompt |
 | | A prompt that would re-read this much context | 500k tokens | asks: compact then send, send anyway, or cancel |
 | | Tool calls per 10 minutes while a conversation or agent carries this much | 20 calls at 400k | asks: keep going, compact after this turn, or stop |
@@ -117,7 +117,7 @@ Mods run in `claude` in a terminal, in the Desktop app's Code tab, in `claude -p
 
 **On Team and Enterprise plans**, and on machines with managed settings, Claude Code runs its built-in `cc-plugin-sec-default` plugin ahead of every other, unless managed `prependPlugins` leaves it out. That plugin sends Claude Code's classic hook events on past user plugins, and Claude Code shows a line for each of the guard's it skipped, such as "agent-usage-guard: its classic.PostToolUse hook was skipped". The guard follows compactions, lockouts, `/clear` and resumes, and Stop hooks that reopen a turn through events that still reach it. Two things need the classic events: the permission mode reaches the guard only when an agent starts, so it may ask you in `dontAsk` mode, and `/subtask` forks go uncounted.
 
-**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). It has no limit on the total number of agents a session starts. Since v2.1.316, `CLAUDE_CODE_SUBAGENT_EFFORT` sets the effort subagents run at when nothing else names one, instead of the session's: a lower one makes each agent cheaper, and the guard still limits how many run. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
+**Native limits still matter.** Claude Code caps a session at 20 concurrent subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) and three layers of nesting (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`). The nesting limit hides the Agent tool from subagents, resumed subagents and workflow agents at that depth, but not from agent-team teammates, so the guard's depth rule covers teammates only. To stop subagents starting agents of their own, set it to `1` in `settings.json`: `"env": { "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1" }`. It has no limit on the total number of agents a session starts. Since v2.1.316, `CLAUDE_CODE_SUBAGENT_EFFORT` sets the effort subagents run at when nothing else names one, instead of the session's: a lower one makes each agent cheaper, and the guard still limits how many run. The guard's defaults are stricter and span sessions; the native caps remain the outer wall for the paths the guard only counts.
 
 ## See what it did
 
@@ -156,7 +156,7 @@ Set these as environment variables, or under `env` in `~/.claude/settings.json`.
 | `AGENT_GUARD_AGENT_MAX` | Agents running at once on this machine (`4`) |
 | `AGENT_GUARD_ROLLING_MAX` | Agent starts and resumes per window on this machine (`12`) |
 | `AGENT_GUARD_AGENT_TOKENS_MAX` | Subagent tokens per window on this machine (`10000000`) |
-| `AGENT_GUARD_DEPTH_MAX` | Agent layers below the main conversation (`1`) |
+| `AGENT_GUARD_DEPTH_MAX` | Agent layers below the main conversation for a teammate and the agents under it (`1`: a teammate starts none) |
 | `AGENT_GUARD_LIMIT_ASK_PERCENT` | Plan-window percentage from which new agents ask (`80`) |
 | `AGENT_GUARD_LIMIT_DENY_PERCENT` | Plan-window percentage from which new agents, wakeups and scheduled jobs are refused and each session is told to wind down (`95`) |
 | `AGENT_GUARD_BURN_PERCENT` | 5-hour-window points per window that make new agents ask (`20`) |

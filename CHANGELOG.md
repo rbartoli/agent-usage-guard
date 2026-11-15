@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Behaviour change: the depth rule covers only agent-team teammates.**
+  Claude Code's own nesting limit (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`)
+  already stops subagents, resumed subagents and workflow agents from
+  nesting past it, so the guard duplicated it there; it does not stop
+  teammates, which the guard still refuses past `AGENT_GUARD_DEPTH_MAX`, along
+  with any agent under one. **If you don't set the native variable,
+  ordinary subagents go from no nesting to Claude Code's default of three
+  layers.** To keep them from starting their own agents, add
+  `"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1"` to `env` in `settings.json`.
 - **Allowing the subagent token budget lasts an hour.** It lasted 10
   minutes, the rule's own window, so a busy hour of agents asked again at
   each burst: over 30 days of use the question came 29 times and was allowed

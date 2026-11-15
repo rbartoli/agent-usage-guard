@@ -138,20 +138,48 @@ describe('agent gate', () => {
     expect(results.filter((r) => r.deny !== undefined)).toHaveLength(1)
   })
 
-  test('a subagent cannot start agents of its own', async ($, on) => {
+  test("a subagent's own agents are left to Claude Code's nesting limit", async ($, on) => {
     const w = world(on)
     await start($, w, true)
     const first = await spawn($, w)
     const nested = await spawn($, w, String(first.agentId))
-    expect(String(nested.deny)).toMatch(/subagents may not start agents of their own here \(depth limit 1\)/)
+    expect(nested.agentId).toBeDefined()
+    expect((await spawn($, w, String(nested.agentId))).agentId).toBeDefined()
+    expect((await spawn($, w, undefined, { workflow: { runId: 'r' }, parentAgentId: String(nested.agentId) })).agentId).toBeDefined()
+  })
+
+  test('a teammate cannot start agents of its own', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    const mate = await spawn($, w, undefined, { isTeammate: true, name: 'reviewer' })
+    expect(mate.agentId).toBeDefined()
+    const nested = await spawn($, w, String(mate.agentId))
+    expect(String(nested.deny)).toMatch(/a teammate, or an agent under one, may not start agents of its own here \(depth limit 1\)/)
     expect(w.questions).toEqual([])
   })
 
-  test('AGENT_GUARD_DEPTH_MAX=2 allows one level of nesting', async ($, on) => {
+  test('nor can an agent under a teammate, past AGENT_GUARD_DEPTH_MAX', async ($, on) => {
     const w = world(on, { env: { AGENT_GUARD_DEPTH_MAX: '2' } })
     await start($, w, true)
+    const mate = await spawn($, w, undefined, { isTeammate: true, name: 'reviewer' })
+    const helper = await spawn($, w, String(mate.agentId))
+    expect(helper.agentId).toBeDefined()
+    expect(String((await spawn($, w, String(helper.agentId))).deny)).toMatch(/\(depth limit 2\)/)
+  })
+
+  test('a teammate the guard did not see start is still a teammate', async ($, on) => {
+    const w = world(on)
+    await start($, w, true)
+    // Started before the guard loaded, as after /reload-plugins.
+    w.agents.push({ id: 'mate-0', teammateId: 'reviewer@team' })
+    expect(String((await spawn($, w, 'mate-0')).deny)).toMatch(/depth limit 1/)
+  })
+
+  test("when the agent list can't be read, every nested agent is held to the depth limit", async ($, on) => {
+    const w = world(on, { agentListFails: true })
+    await start($, w, true)
     const first = await spawn($, w)
-    expect((await spawn($, w, String(first.agentId))).agentId).toBeDefined()
+    expect(String((await spawn($, w, String(first.agentId))).deny)).toMatch(/: an agent may not start agents of its own here \(depth limit 1\)/)
   })
 
   test('the 13th start in ten minutes trips the rolling budget, counting starts that have finished', async ($, on) => {
@@ -408,7 +436,7 @@ describe('agent fuse and overrides', () => {
   test('five refused agent calls pause spawns for the fuse period without asking', async ($, on) => {
     const w = world(on)
     await start($, w, true)
-    const first = await spawn($, w)
+    const first = await spawn($, w, undefined, { isTeammate: true })
     for (let i = 0; i < 4; i++) await spawn($, w, String(first.agentId))
     const fifth = await spawn($, w, String(first.agentId))
     expect(String(fifth.deny)).toMatch(/agent spawns in this session are paused until \d\d:\d\d/)
@@ -422,7 +450,7 @@ describe('agent fuse and overrides', () => {
   test('resume clears a burning fuse, so declined questions really ask again', async ($, on) => {
     const w = world(on, { answers: ['Allow'] })
     await start($, w, true)
-    const first = await spawn($, w)
+    const first = await spawn($, w, undefined, { isTeammate: true })
     for (let i = 0; i < 5; i++) await spawn($, w, String(first.agentId))
     expect(String((await spawn($, w)).deny)).toMatch(/paused until/)
     await $.command.run({ command: 'agent-guard', args: 'resume', origin: TYPED } as never)

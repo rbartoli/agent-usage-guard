@@ -15,6 +15,13 @@ export type AgentRequest = {
   resume: boolean
   /** It runs on Haiku: the running and starts caps leave it out. */
   cheap?: boolean
+  /**
+   * `teammate` when the loop asking is a teammate or runs under one, `unknown`
+   * when that could not be read. Only these are held to the depth limit:
+   * Claude Code's own nesting limit (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`)
+   * covers every other agent, and not teammates.
+   */
+  team?: 'teammate' | 'unknown'
 }
 
 /** A model id or alias for Haiku, the tier the running and starts caps leave out. */
@@ -41,8 +48,9 @@ export function agentGate(
   if (!config.enabled || overrideCovers(state, now, 'agents')) return ALLOW
   const what = request.resume ? 'resuming this agent' : 'this agent'
 
-  if (request.depth > config.depthMax) {
-    const base = `${request.resume ? 'This agent cannot be resumed' : 'This agent was not started'}: subagents may not start agents of their own here (depth limit ${config.depthMax}). Do the work yourself and report back.`
+  if (request.team !== undefined && request.depth > config.depthMax) {
+    const who = request.team === 'teammate' ? 'a teammate, or an agent under one,' : 'an agent'
+    const base = `${request.resume ? 'This agent cannot be resumed' : 'This agent was not started'}: ${who} may not start agents of its own here (depth limit ${config.depthMax}). Do the work yourself and report back.`
     return refuse(state, config, now, 'depth', 'depth', base, true)
   }
   if (state.fuseUntil !== undefined && now < state.fuseUntil) {

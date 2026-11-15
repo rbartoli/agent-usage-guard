@@ -334,7 +334,13 @@ export function register(on: On): void {
     const parentDepth = e.parentAgentId ? (session.agents[e.parentAgentId]?.depth ?? 1) : 0
     // A fork runs on its parent's model; any other agent on the one it names, else its own definition's or its parent's.
     const asked = config.haikuExempt && isHaiku(e.fork ? e.parentModel : e.model)
-    const request = { loop, depth: known?.depth ?? parentDepth + 1, resume: resumed !== undefined, cheap: known?.cheap ?? asked }
+    const request = {
+      loop,
+      depth: known?.depth ?? parentDepth + 1,
+      resume: resumed !== undefined,
+      cheap: known?.cheap ?? asked,
+      team: await underTeammate($, e.parentAgentId),
+    }
     const { verdict, reservedAt } = await agentVerdict($, now, request)
     if (verdict.kind === 'deny') {
       await journalDenial($, verdict, 'Agent')
@@ -819,6 +825,29 @@ async function putBack($: Api, text: string): Promise<void> {
   const typed = (await $.prompt.read()).text
   if (typed.includes(text)) return
   await $.prompt.fill({ text: typed ? `${text}\n${typed}` : text }).catch(() => undefined)
+}
+
+/**
+ * Whether the loop with this id is a teammate or runs under one, from Claude
+ * Code's own list of the session's agents: it also knows teammates that started
+ * before the guard loaded. A list that can't be read gives `unknown`, which the
+ * depth limit holds to as it did every nested agent before it was narrowed to
+ * teammates.
+ */
+async function underTeammate($: Api, loopId: string | undefined): Promise<'teammate' | 'unknown' | undefined> {
+  if (loopId === undefined) return undefined
+  try {
+    const agents = new Map((await $.agent.list()).map((a) => [a.id, a]))
+    const seen = new Set<string>()
+    for (let id: string | undefined = loopId; id !== undefined && !seen.has(id); id = agents.get(id)?.parentId) {
+      seen.add(id)
+      if (agents.get(id)?.teammateId !== undefined) return 'teammate'
+    }
+    return undefined
+  } catch (error) {
+    $.ui.log(`agent-usage-guard could not read the session's agents: ${String(error)}`, { to: 'debug' })
+    return 'unknown'
+  }
 }
 
 /** A verdict on an agent, and the slot it holds when allowed, for `releaseStart`. */
