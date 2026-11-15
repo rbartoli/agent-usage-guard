@@ -62,7 +62,7 @@ export function simulate(rule: SimulatedRule, config: Config, now: number, canAs
       state.limits.five_hour = fiveHour(config.limitDenyPercent)
       return scheduleGate(state, [], config, now, { loop: MAIN, tool: 'ScheduleWakeup', fingerprint: 'simulated', label: 'this conversation' })
     case 'depth':
-      return agentGate(state, [], config, now, { ...agent, depth: config.depthMax + 1 })
+      return agentGate(state, [], config, now, { ...agent, depth: config.depthMax + 1, team: 'teammate' })
     case 'retry':
       state.failures.simulated = { count: config.failureMax, last: now - MINUTE, loop: MAIN }
       return toolGate(state, config, now, { loop: MAIN, tool: 'Bash', fingerprint: 'simulated', label: 'this conversation' })

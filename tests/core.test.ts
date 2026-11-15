@@ -90,8 +90,8 @@ describe('denial ladder', () => {
   test('each refusal of a condition reads differently and escalates', () => {
     const config = defaultConfig()
     const state = newSession('s', false)
-    state.agents.a = { id: 'a', kind: 'subagent', depth: 1, running: true, startedAt: NOW }
-    const request = { loop: 'a', depth: 2, resume: false }
+    state.agents.a = { id: 'a', kind: 'teammate', depth: 1, running: true, startedAt: NOW }
+    const request = { loop: 'a', depth: 2, resume: false, team: 'teammate' as const }
     const texts = [0, 1, 2].map((i) => {
       const v = agentGate(state, [], config, NOW + i * 1000, request)
       return v.kind === 'deny' ? v.message : ''
@@ -105,8 +105,8 @@ describe('denial ladder', () => {
   test('refusals of other conditions keep their own count', () => {
     const config = { ...defaultConfig(), agentMax: 1 }
     const state = newSession('s', false)
-    state.agents.a = { id: 'a', kind: 'subagent', depth: 1, running: true, startedAt: NOW }
-    const nested = agentGate(state, [], config, NOW, { loop: 'a', depth: 2, resume: false })
+    state.agents.a = { id: 'a', kind: 'teammate', depth: 1, running: true, startedAt: NOW }
+    const nested = agentGate(state, [], config, NOW, { loop: 'a', depth: 2, resume: false, team: 'teammate' })
     const busy = agentGate(state, [], config, NOW + 1, { loop: 'main', depth: 1, resume: false })
     expect(nested.kind === 'deny' && nested.message).toMatch(/refusal 1 at/)
     expect(busy.kind === 'deny' && busy.message).toMatch(/refusal 1 at/)

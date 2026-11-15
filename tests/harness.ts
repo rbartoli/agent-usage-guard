@@ -31,7 +31,12 @@ export type WorldOptions = {
   onSpawn?: () => Promise<void>
   /** What `$.session.usage()` reports for the main context. */
   contextTokens?: number
+  /** `$.agent.list()` fails, as on an engine error. */
+  agentListFails?: boolean
 }
+
+/** One agent as `$.agent.list()` lists it: the fields the guard reads. */
+export type ListedAgent = { id: string; teammateId?: string; parentId?: string }
 
 type Message = { role: 'user' | 'assistant'; text: string }
 
@@ -57,6 +62,8 @@ export type World = {
   sessionId: string
   /** The main transcript `$.session.messages()` returns. */
   transcript: Message[]
+  /** What `$.agent.list()` returns: every agent spawned, and any a test adds, such as one started before the guard loaded. */
+  agents: ListedAgent[]
 }
 
 export function world(on: On, options: WorldOptions = {}): World {
@@ -84,6 +91,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     storeFull: false,
     sessionId: SESSION_ID,
     transcript: [],
+    agents: [],
   }
 
   on('store.get', ($, e) => ({ value: structuredClone(store.get(e.key)) }))
@@ -143,9 +151,21 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('agent.spawn', async ($, e) => {
-    const agentId = (e.resume as { agentId: string } | undefined)?.agentId ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
+    const resumed = (e.resume as { agentId: string } | undefined)?.agentId
+    const agentId = resumed ?? `agent-${w.ran.filter((r) => r === 'spawn').length}`
     await options.onSpawn?.()
+    if (resumed === undefined) {
+      w.agents.push({
+        id: agentId,
+        ...(e.isTeammate ? { teammateId: `${String(e.name ?? 'mate')}@team` } : {}),
+        ...(e.parentAgentId ? { parentId: String(e.parentAgentId) } : {}),
+      })
+    }
     return { model: (e.model as string | undefined) ?? options.spawnModel ?? 'claude-test', agentId } as never
+  })
+  on('agent.list', () => {
+    if (options.agentListFails) throw new Error('the agent list could not be read')
+    return { value: w.agents.map((a) => ({ description: 'test agent', type: a.teammateId ? 'teammate' : 'general-purpose', status: 'running', ...a })) } as never
   })
   on('tool.call', async ($, e) => {
     if (e.tool === 'AskUserQuestion') {
@@ -172,14 +192,15 @@ export async function start($: Engine, w: World, interactive: boolean): Promise<
   await w.clock.settle()
 }
 
-/** Fires one agent spawn from the main loop, or from `parent`. */
-export async function spawn($: Engine, w: World, parent?: string): Promise<Record<string, unknown>> {
+/** Fires one agent spawn from the main loop, or from `parent`; `extra` adds input such as `isTeammate`. */
+export async function spawn($: Engine, w: World, parent?: string, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   w.ran.push('spawn')
   return (await $.agent.spawn({
     prompt: 'work',
     description: 'test agent',
     subagentType: 'general-purpose',
     ...(parent ? { parentAgentId: parent } : {}),
+    ...extra,
   } as never)) as Record<string, unknown>
 }
 
