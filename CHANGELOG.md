@@ -16,10 +16,24 @@
   held behind it are refused at the same moment, each loaded the day's rows
   and the last load wrote over the first's row. The question was lost and
   its answer kept, so a 30-day report showed concurrency with 7 asks and 13
-  answers. Journal writes now run one after another.
+  answers. Journal writes now run one after another. Rows written before the
+  fix still hold such answers, and the report counts the question each one
+  answered.
 - **The report counts "Compact, then send" apart from "send anyway".** Both
   were counted as allowed, so a question that led you to compact read as one
-  you waved through. Each rule now shows `allowed / compacted / declined`.
+  you waved through.
+- **Each rule's question counts add up.** A rule shows
+  `allowed / compacted / declined / no answer`, and the four sum to its asks.
+  A question that could not be shown, or that has no answer recorded, was
+  left out of every column, so tool-budget read 57 asks over 56 outcomes.
+- **The report counts plan windows, not sessions, past 80% and 95%.** Every
+  session recorded the threshold it found passed, so one weekly window at 80%
+  read as "weekly 80% ×293". Limit rows now record which window they belong
+  to, and the report counts each window once. Rows from before this release
+  don't name it: they are left out, and the line says how many.
+- **The lockout list says it shows the latest 5**, so 6 lockouts above 5
+  dates no longer reads as one missing. Context and subagent-token buckets
+  read smallest first instead of most frequent first.
 
 ## 1.2.1 — 2026-11-10
 

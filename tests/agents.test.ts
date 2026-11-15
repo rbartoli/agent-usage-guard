@@ -400,7 +400,7 @@ describe('plan-window gate', () => {
     await $.session.measure(measure(81) as never)
     await $.session.measure(measure(83) as never)
     const crossings = journalRows(w).filter((r) => r.ev === 'limit')
-    expect(crossings).toEqual([expect.objectContaining({ kind: 'five_hour', pct: 81, rule: '80%' })])
+    expect(crossings).toEqual([expect.objectContaining({ kind: 'five_hour', pct: 81, rule: '80%', resets: Date.parse('2027-01-15T15:00:00.000Z') })])
   })
 })
 

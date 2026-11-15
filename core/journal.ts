@@ -30,7 +30,7 @@ export type JournalRow = {
   /** Plan-window percentage, for `limit`, `note` and `lockout`. */
   pct?: number
   kind?: string
-  /** For `lockout`: when the window that locked resets, from a current reading of it. */
+  /** For `limit` and `lockout`: when the plan window resets, from a current reading of it. */
   resets?: number
   /** For `deny`: which refusal of the condition this was. */
   n?: number
@@ -40,6 +40,8 @@ const KEY_PREFIX = 'journal:'
 const DAY_MS = 86_400_000
 /** Lockout rows with no reset time belong to one lockout while less than an hour apart. */
 const LOCKOUT_GAP_MS = 3_600_000
+/** The report lists this many lockouts, the latest. */
+const LOCKOUTS_LISTED = 5
 
 /** Each session appends only to its own key for the day, so sessions never overwrite each other. */
 export function journalKey(sessionId: string, now: number): string {
@@ -100,7 +102,7 @@ export function isJournalRow(value: unknown): value is JournalRow {
   )
 }
 
-type RuleCount = { asks: number; allowed: number; compacted: number; declined: number; denials: number; drops: number }
+type RuleCount = { asks: number; allowed: number; compacted: number; declined: number; unanswered: number; denials: number; drops: number }
 
 /** The text `/agent-guard report` prints. */
 export function formatReport(rows: readonly JournalRow[], now: number, days: number): string {
@@ -117,41 +119,26 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
   const modelScoped = recent.filter((r) => r.ev === 'lockout' && r.kind === 'model').length
   // Only a span of a week or more gives a weekly rate; a shorter one would extrapolate.
   const rate = days >= 7 ? ` (${(lockouts.length / (days / 7)).toFixed(1)} per week)` : ''
-  lines.push('', `Usage-limit lockouts: ${lockouts.length}${rate}`)
-  for (const row of lockouts.slice(-5)) {
+  const listed = lockouts.length > LOCKOUTS_LISTED ? `, the latest ${LOCKOUTS_LISTED}:` : ''
+  lines.push('', `Usage-limit lockouts: ${lockouts.length}${rate}${listed}`)
+  for (const row of lockouts.slice(-LOCKOUTS_LISTED)) {
     lines.push(`  ${stamp(row.t)}${row.kind && row.kind !== 'unknown' ? ` · ${windowName(row.kind)} window` : ''}`)
   }
   if (modelScoped > 0) lines.push(`Limits on one model, where /model switched away: ${modelScoped}`)
 
-  const crossings = recent.filter((r) => r.ev === 'limit')
-  if (crossings.length > 0) {
-    const byThreshold = countBy(crossings, (r) => `${windowName(r.kind ?? '?')} ${r.rule ?? ''}`.trim())
-    lines.push(`Limit crossings: ${[...byThreshold].map(([k, n]) => `${k} ×${n}`).join(', ')}`)
-  }
+  const limits = recent.filter((r) => r.ev === 'limit')
+  if (limits.length > 0) lines.push(`Plan windows past a threshold: ${windowsPast(limits)}`)
   const windDowns = recent.filter((r) => r.ev === 'note' && r.rule === 'wind-down')
   if (windDowns.length > 0) lines.push(`Wind-down notes: ${windDowns.length} in ${count(new Set(windDowns.map((r) => r.s)).size, 'session')}`)
 
-  const perRule = new Map<string, RuleCount>()
-  const bump = (rule: string | undefined, field: keyof RuleCount): void => {
-    const key = rule ?? 'unknown'
-    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, compacted: 0, declined: 0, denials: 0, drops: 0 }
-    entry[field] += 1
-    perRule.set(key, entry)
-  }
-  for (const row of recent) {
-    if (row.ev === 'ask') bump(row.rule, 'asks')
-    else if (row.ev === 'deny') bump(row.rule, 'denials')
-    else if (row.ev === 'drop') bump(row.rule, 'drops')
-    // A question that could not be shown was neither allowed nor declined.
-    else if (row.ev === 'answer' && row.answer !== 'unavailable') {
-      bump(row.rule, row.answer === 'allow' ? 'allowed' : row.answer === 'compact' ? 'compacted' : 'declined')
-    }
-  }
+  const perRule = byRule(recent)
   if (perRule.size > 0) {
-    lines.push('', 'By rule (asks: allowed / compacted / declined · refusals to the model · prompts held)')
+    lines.push('', 'By rule (asks: allowed / compacted / declined / no answer · refusals to the model · prompts held)')
     const width = Math.max(...[...perRule.keys()].map((k) => k.length))
     for (const [rule, c] of [...perRule].sort((a, b) => total(b[1]) - total(a[1]))) {
-      lines.push(`  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.compacted} / ${c.declined} · refusals ${c.denials} · held ${c.drops}`)
+      lines.push(
+        `  ${rule.padEnd(width)}  asks ${c.asks}: ${c.allowed} / ${c.compacted} / ${c.declined} / ${c.unanswered} · refusals ${c.denials} · held ${c.drops}`,
+      )
     }
   }
 
@@ -163,10 +150,10 @@ export function formatReport(rows: readonly JournalRow[], now: number, days: num
   const tools = countBy(denials.filter((r) => r.tool), (r) => r.tool ?? '')
   if (tools.size > 0) lines.push(`Refusals by tool: ${[...tools].map(([k, n]) => `${k} ${n}`).join(', ')}`)
 
-  const contexts = countBy(recent.filter((r) => r.ctx), (r) => r.ctx ?? '')
+  const contexts = inOrder(countBy(recent.filter((r) => r.ctx), (r) => r.ctx ?? ''), BUCKETS)
   if (contexts.size > 0) lines.push(`Context when it acted: ${[...contexts].map(([k, n]) => `${k} ${n}`).join(', ')}`)
 
-  const agentTokens = countBy(recent.filter((r) => r.ev === 'ask' && r.tok), (r) => r.tok ?? '')
+  const agentTokens = inOrder(countBy(recent.filter((r) => r.ev === 'ask' && r.tok), (r) => r.tok ?? ''), TOKEN_BUCKETS)
   if (agentTokens.size > 0) lines.push(`Subagent tokens when it asked: ${[...agentTokens].map(([k, n]) => `${k} ${n}`).join(', ')}`)
 
   const overrides = recent.filter((r) => r.ev === 'override')
@@ -195,6 +182,67 @@ function lockedWindows(lockouts: readonly JournalRow[]): JournalRow[] {
     if (!same) firsts.push(row)
   }
   return firsts
+}
+
+/**
+ * Asks and how each ended, per rule. Every ask ends as one of allowed,
+ * compacted, declined or no answer, so the four add up to the asks. An
+ * answer with no open question in its session counts the question too: it
+ * can only follow one, and before 1.2.2 two journal writes at once could
+ * drop the question's row and keep the answer's. A question that could not be
+ * shown, or has no answer recorded, has no answer.
+ */
+function byRule(rows: readonly JournalRow[]): Map<string, RuleCount> {
+  const perRule = new Map<string, RuleCount>()
+  const open = new Map<string, number>()
+  const bump = (rule: string | undefined, field: keyof RuleCount): void => {
+    const key = rule ?? 'unknown'
+    const entry = perRule.get(key) ?? { asks: 0, allowed: 0, compacted: 0, declined: 0, unanswered: 0, denials: 0, drops: 0 }
+    entry[field] += 1
+    perRule.set(key, entry)
+  }
+  for (const row of rows) {
+    const question = `${row.s}\n${row.rule ?? 'unknown'}`
+    if (row.ev === 'ask') {
+      bump(row.rule, 'asks')
+      open.set(question, (open.get(question) ?? 0) + 1)
+    } else if (row.ev === 'answer') {
+      const waiting = open.get(question) ?? 0
+      if (waiting > 0) open.set(question, waiting - 1)
+      else bump(row.rule, 'asks')
+      bump(row.rule, row.answer === 'allow' ? 'allowed' : row.answer === 'compact' ? 'compacted' : row.answer === 'unavailable' ? 'unanswered' : 'declined')
+    } else if (row.ev === 'deny') bump(row.rule, 'denials')
+    else if (row.ev === 'drop') bump(row.rule, 'drops')
+  }
+  for (const [question, waiting] of open) {
+    for (let i = 0; i < waiting; i++) bump(question.split('\n')[1], 'unanswered')
+  }
+  return perRule
+}
+
+/**
+ * The plan windows that passed each threshold, from rows that name their
+ * window: every session records the thresholds it finds passed, so one window
+ * has a row per session. Rows from before 1.2.2 don't name it and can't be
+ * counted exactly, so they are left out, and the line says how many and from
+ * when it counts.
+ */
+function windowsPast(limits: readonly JournalRow[]): string {
+  const named = limits.filter((r) => r.resets !== undefined)
+  const unnamed = limits.length - named.length
+  const leftOut = `${count(unnamed, 'row')} that ${unnamed === 1 ? "doesn't" : "don't"} name the window left out`
+  if (named.length === 0) return `none counted, ${leftOut}`
+  const windows = new Map<string, JournalRow>()
+  for (const row of named) windows.set(`${row.kind}\n${row.rule}\n${row.resets}`, row)
+  const byThreshold = countBy([...windows.values()], (r) => `${windowName(r.kind ?? '?')} ${r.rule ?? ''}`.trim())
+  const counts = [...byThreshold].map(([k, n]) => `${k} ×${n}`).join(', ')
+  return unnamed === 0 ? counts : `${counts} (from ${stamp(named[0]!.t)}; ${leftOut})`
+}
+
+/** The counts in the order the buckets run, smallest first. */
+function inOrder(counts: ReadonlyMap<string, number>, buckets: ReadonlySet<string>): Map<string, number> {
+  const order = [...buckets]
+  return new Map([...counts].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])))
 }
 
 function total(c: RuleCount): number {
