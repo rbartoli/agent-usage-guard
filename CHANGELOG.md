@@ -43,6 +43,11 @@
 - **The lockout list says it shows the latest 5**, so 6 lockouts above 5
   dates no longer reads as one missing. Context and subagent-token buckets
   read smallest first instead of most frequent first.
+- **The README explains Claude Code's "haven't used lately" tip.** Two
+  weeks after install, Claude Code lists the guard under Not used recently
+  and suggests disabling it, because it doesn't count a mod's hooks or
+  commands as use. Reported as anthropics/claude-code#110537 with a repro;
+  the guard's entry stayed at zero uses for 765 sessions.
 
 ## 1.2.1 — 2026-11-10
 

@@ -40,6 +40,8 @@ Run these commands inside Claude Code v2.1.287 or later:
 
 Then run `/agent-guard` to see what it sees, and `/agent-guard simulate concurrency` to see the question it asks when too many agents run, with nothing held or spent. Mods are on by default; the [overview](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off) lists the settings that turn them off.
 
+About two weeks after you install it, `/plugin` may list the guard under **Not used recently**, and a tip may suggest you disable it. Claude Code doesn't count a mod's hooks or commands as use, so it misses that the guard runs in every session ([anthropics/claude-code#110537](https://github.com/anthropics/claude-code/issues/110537)). Keep it enabled; `/agent-guard report 14` shows what it did.
+
 ## Why this exists
 
 One afternoon I gave Claude Code a research prompt at max effort. It spawned **394 subagent calls, 341 of them running at once, and pushed 84M context tokens through the API in ten minutes.** Session over: *"Claude usage limit reached."* Locked out until the window reset.
