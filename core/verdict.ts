@@ -28,12 +28,20 @@ export type Rule =
   | 'prompt-context'
   | 'dormant'
 
+/** How long an approval lasts: a span from the answer, or to a fixed time such as a plan window's reset. */
+export type Lease = { forMs: number } | { until: number }
+
+/** When an approval given at `answeredAt` ends. */
+export function leaseEnd(lease: Lease, answeredAt: number): number {
+  return 'until' in lease ? lease.until : answeredAt + lease.forMs
+}
+
 /** One condition that tripped, and how long an approval of it lasts. */
 export type Trip = {
   rule: Rule
   detail: string
   leaseKey: string
-  leaseUntil: number
+  lease: Lease
   /** For `agent-tokens`: the subagent tokens it counted, for the journal's bucket. */
   tokens?: number
 }

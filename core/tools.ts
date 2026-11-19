@@ -87,7 +87,7 @@ export function toolGate(state: SessionState, config: Config, now: number, reque
     kind: 'ask',
     family: 'heavy',
     loop: request.loop,
-    trips: [{ rule: 'tool-budget', detail, leaseKey: `heavy:${request.loop}`, leaseUntil: now + HEAVY_LEASE_MS }],
+    trips: [{ rule: 'tool-budget', detail, leaseKey: `heavy:${request.loop}`, lease: { forMs: HEAVY_LEASE_MS } }],
     question: `${sentence(detail)}. Keep working at ${tokens(context)} context?`,
     options: request.loop === MAIN ? [HEAVY_CONTINUE, HEAVY_COMPACT, HEAVY_STOP] : [HEAVY_CONTINUE, HEAVY_STOP_AGENT],
   }

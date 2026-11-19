@@ -54,12 +54,33 @@ describe('agent gate', () => {
     for (let i = 0; i < 4; i++) await spawn($, w)
     expect((await spawn($, w)).agentId).toBeDefined()
     expect(w.questions).toHaveLength(1)
-    expect(w.questions[0]).toMatch(/^4 agents are running on this machine \(limit 4\)\. Allowing lifts this limit until \d\d:\d\d\. Start this agent\?$/)
+    expect(w.questions[0]).toMatch(/^4 agents are running on this machine \(limit 4\)\. Allowing lifts this limit for 10 min\. Start this agent\?$/)
     expect(w.options[0]).toEqual(['Allow', "Don't start it"])
     expect((await spawn($, w)).agentId).toBeDefined()
     expect(w.questions).toHaveLength(1)
     const answers = journalRows(w).filter((r) => r.ev === 'answer')
     expect(answers).toEqual([expect.objectContaining({ rule: 'concurrency', answer: 'allow' })])
+  })
+
+  test('an approval given late still lifts the limit for its full time from the answer', async ($, on) => {
+    let openFor = 23 * MINUTE
+    const w = world(on, {
+      answers: ['Allow', 'Allow'],
+      env: { AGENT_GUARD_PEER_TTL_SECONDS: '86400' }, // the agents stay running through the wait
+      questionHeld: async () => {
+        await w.clock.advance(openFor)
+        openFor = 0
+      },
+    })
+    await start($, w, true)
+    for (let i = 0; i < 4; i++) await spawn($, w)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    await w.clock.advance(9 * MINUTE)
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.questions).toHaveLength(1)
+    await w.clock.advance(2 * MINUTE)
+    await spawn($, w)
+    expect(w.questions).toHaveLength(2)
   })
 
   test('declining refuses this agent and the next without asking twice, and the wording escalates', async ($, on) => {
@@ -245,7 +266,7 @@ describe('agent gate', () => {
     await burst()
     expect((await burst()).agentId).toBeDefined()
     expect(w.questions).toHaveLength(1)
-    expect(w.questions[0]).toMatch(/subagents processed 12M tokens in the last 10 min \(limit 10M\)\. Allowing lifts this limit until 13:00\./i)
+    expect(w.questions[0]).toMatch(/subagents processed 12M tokens in the last 10 min \(limit 10M\)\. Allowing lifts this limit for 1 h\./i)
     await w.clock.advance(30 * MINUTE)
     await burst()
     expect((await spawn($, w)).agentId).toBeDefined()
@@ -256,6 +277,35 @@ describe('agent gate', () => {
     expect(w.questions).toHaveLength(2)
     const asks = journalRows(w).filter((r) => r.ev === 'ask')
     expect(asks).toEqual([expect.objectContaining({ rule: 'agent-tokens', tok: '10-15M' }), expect.objectContaining({ rule: 'agent-tokens', tok: '10-15M' })])
+  })
+
+  test('an allowed subagent token budget lasts the hour from the answer, however long the question stayed open', async ($, on) => {
+    let openFor = 47 * MINUTE
+    const w = world(on, {
+      answers: ['Allow', 'Allow'],
+      questionHeld: async () => {
+        await w.clock.advance(openFor)
+        openFor = 0
+      },
+    })
+    await start($, w, true)
+    const burst = async (): Promise<void> => {
+      const agent = await spawn($, w)
+      await respond($, w, 6_000_000, String(agent.agentId))
+      await respond($, w, 6_000_000, String(agent.agentId))
+      await $.turn.complete({ turnId: 'x', answer: '', durationMs: 1, isAborted: false, reason: 'answer', agentId: String(agent.agentId) } as never)
+    }
+    await burst()
+    await burst()
+    expect(w.questions).toHaveLength(1)
+    await w.clock.advance(50 * MINUTE)
+    await burst()
+    expect((await spawn($, w)).agentId).toBeDefined()
+    expect(w.questions).toHaveLength(1)
+    await w.clock.advance(11 * MINUTE)
+    await burst()
+    await spawn($, w)
+    expect(w.questions).toHaveLength(2)
   })
 
   test('a store that stops saving shows in the status line and the status, until a save works again', async ($, on) => {
@@ -346,7 +396,7 @@ describe('plan-window gate', () => {
     await start($, w, true)
     await $.session.measure(measure(82) as never)
     expect((await spawn($, w)).agentId).toBeDefined()
-    expect(w.questions[0]).toMatch(/the 5-hour window is 82% used/i)
+    expect(w.questions[0]).toMatch(/the 5-hour window is 82% used.*Allowing lifts this limit until \d\d:\d\d\./i)
     await $.session.measure(measure(90) as never)
     await w.clock.advance(30 * MINUTE)
     await $.turn.complete({ turnId: 'x', answer: '', durationMs: 1, isAborted: false, reason: 'answer', agentId: 'agent-1' } as never)

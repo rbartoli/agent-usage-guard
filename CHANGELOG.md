@@ -19,6 +19,14 @@
   meanwhile. The journal now records how many subagent tokens each agent
   question counted, as a bucket such as `10-15M`, and the report shows them,
   so the 10M default can be set from data.
+- **An approval counts from your answer.** The time an agent limit stays
+  lifted started when the question appeared, so a question left open used up
+  the approval. Over four days of use, 4 of 8 approvals of the subagent token
+  budget lost 24 to 57 minutes, one was asked again 15 minutes after the
+  answer, and 2 of 22 approvals of the 10-minute limits had run out before
+  the answer came. The question now says how long allowing lasts ("for 10
+  min"), as the end time isn't known until you answer. An approval near a plan
+  limit still ends when that window resets.
 - **The report no longer loses a question asked during a parallel batch of
   agents.** When a session's first journal write of the day started while
   another was under way, as when the agent question opens and the agents
