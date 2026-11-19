@@ -105,7 +105,7 @@ function promptAsk(rule: 'prompt-context' | 'dormant', question: string, detail:
     kind: 'ask',
     family: 'prompt',
     loop: MAIN,
-    trips: [{ rule, detail, leaseKey: rule, leaseUntil: Number.MAX_SAFE_INTEGER }],
+    trips: [{ rule, detail, leaseKey: rule, lease: { until: Number.MAX_SAFE_INTEGER } }],
     question,
     options: [PROMPT_COMPACT, PROMPT_SEND, PROMPT_CANCEL],
   }

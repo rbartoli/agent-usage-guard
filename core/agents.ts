@@ -4,7 +4,7 @@
 import type { Config } from './config.ts'
 import { type LimitReading, type LoopId, type PeerRecord, type SessionState, countOnMachine, overrideCovers, runningAgents, tokensWithin } from './state.ts'
 import { count, duration, join, sentence, shortClock, tokens, windowName } from './text.ts'
-import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, refuse } from './verdict.ts'
+import { ALLOW, type Ask, type Deny, SIGNATURE, type Trip, type Verdict, leaseEnd, refuse } from './verdict.ts'
 
 export type AgentRequest = {
   /** The loop asking for the agent. */
@@ -79,7 +79,7 @@ export function agentGate(
     family: 'agents',
     loop: request.loop,
     trips,
-    question: `${sentence(details)}. Allowing lifts ${trips.length > 1 ? 'these limits' : 'this limit'} until ${shortClock(Math.max(...trips.map((t) => t.leaseUntil)))}. ${request.resume ? 'Resume this agent' : 'Start this agent'}?`,
+    question: `${sentence(details)}. Allowing lifts ${trips.length > 1 ? 'these limits' : 'this limit'} ${liftSpan(trips, now)}. ${request.resume ? 'Resume this agent' : 'Start this agent'}?`,
     options: [AGENT_ALLOW, AGENT_REFUSE],
   }
 }
@@ -98,7 +98,7 @@ export function resolveAgentAsk(
   resume = false,
 ): Verdict {
   if (answer === AGENT_ALLOW) {
-    for (const trip of ask.trips) state.leases[trip.leaseKey] = Math.max(state.leases[trip.leaseKey] ?? 0, trip.leaseUntil)
+    for (const trip of ask.trips) state.leases[trip.leaseKey] = Math.max(state.leases[trip.leaseKey] ?? 0, leaseEnd(trip.lease, now))
     return ALLOW
   }
   state.refusals.agents = now + config.windowMs
@@ -137,7 +137,7 @@ function agentTrips(
 ): Trip[] {
   const window = config.windowMs
   const span = duration(window)
-  const until = now + window
+  const lease = { forMs: window }
   const trips: Trip[] = []
 
   const running = runningAgents(state) + peers.reduce((sum, p) => sum + p.running, 0)
@@ -146,7 +146,7 @@ function agentTrips(
       rule: 'concurrency',
       detail: `${count(running, 'agent')} ${running === 1 ? 'is' : 'are'} running on this machine (limit ${config.agentMax})`,
       leaseKey: 'concurrency',
-      leaseUntil: until,
+      lease,
     })
   }
 
@@ -156,7 +156,7 @@ function agentTrips(
       rule: 'starts',
       detail: `${count(starts, 'agent')} started on this machine in the last ${span} (limit ${config.rollingMax})`,
       leaseKey: 'starts',
-      leaseUntil: until,
+      lease,
     })
   }
 
@@ -166,7 +166,7 @@ function agentTrips(
       rule: 'agent-tokens',
       detail: `subagents processed ${tokens(processed)} tokens in the last ${span} (limit ${tokens(config.agentTokensMax)})`,
       leaseKey: 'agent-tokens',
-      leaseUntil: now + AGENT_TOKENS_LIFT_MS,
+      lease: { forMs: AGENT_TOKENS_LIFT_MS },
       tokens: processed,
     })
   }
@@ -177,14 +177,14 @@ function agentTrips(
       rule: 'burn',
       detail: `the 5-hour window rose ${burned.points} points in the last ${span} (now ${burned.percent}%)`,
       leaseKey: 'burn',
-      leaseUntil: until,
+      lease,
     })
   } else if (burned?.fullAt !== undefined && burned.resetsAt !== undefined) {
     trips.push({
       rule: 'burn',
       detail: `at this pace the 5-hour window fills by ${shortClock(burned.fullAt)}, before it resets at ${shortClock(burned.resetsAt)} (now ${burned.percent}%)`,
       leaseKey: 'burn',
-      leaseUntil: until,
+      lease,
     })
   }
 
@@ -193,10 +193,16 @@ function agentTrips(
       rule: 'limit',
       detail: limitDetail(limit),
       leaseKey: `limit:${limit.kind}`,
-      leaseUntil: limit.resetsAt ?? until,
+      lease: limit.resetsAt === undefined ? lease : { until: limit.resetsAt },
     })
   }
   return trips
+}
+
+/** How the question words the time allowing lasts: the longest of the trips'. */
+function liftSpan(trips: readonly Trip[], now: number): string {
+  const { lease } = trips.reduce((a, b) => (leaseEnd(b.lease, now) > leaseEnd(a.lease, now) ? b : a))
+  return 'until' in lease ? `until ${shortClock(lease.until)}` : `for ${duration(lease.forMs)}`
 }
 
 function unattended(state: SessionState, config: Config, now: number, trips: Trip[], details: string, resume: boolean): Deny {
